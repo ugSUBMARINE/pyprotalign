@@ -310,8 +310,10 @@ def main() -> None:
         output_path = Path(args.output)
         if output_path.suffix in [".cif", ".pdb"]:
             suffix = output_path.stem
+            output_ext = output_path.suffix
         else:
             suffix = args.output
+            output_ext = ".cif"
 
         # Process each mobile file
         results = []
@@ -333,7 +335,7 @@ def main() -> None:
                 mobile_st, rmsd, info_str = _align_structures(fixed_st, mobile_st, args)
 
                 # Write output
-                output_file = Path.cwd() / f"{mobile_path.stem}_{suffix}.cif"
+                output_file = Path.cwd() / f"{mobile_path.stem}_{suffix}{output_ext}"
                 write_structure(mobile_st, str(output_file))
 
                 results.append(
