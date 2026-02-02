@@ -7,13 +7,13 @@ from pathlib import Path
 import gemmi
 import numpy as np
 
-from pyprotalign import __version__
-from pyprotalign.alignment import align_multi_chain, align_quaternary, align_sequences
-from pyprotalign.io import load_structure, write_structure
-from pyprotalign.kabsch import calculate_rmsd, superpose
-from pyprotalign.refine import iterative_superpose
-from pyprotalign.selection import extract_ca_atoms, extract_sequence, get_all_protein_chains, get_chain
-from pyprotalign.transform import apply_transformation, generate_conflict_free_chain_map, rename_chains
+from . import __version__
+from .alignment import align_multi_chain, align_quaternary, align_sequences
+from .io import load_structure, write_structure
+from .kabsch import calculate_rmsd, superpose
+from .refine import iterative_superpose
+from .selection import extract_ca_atoms, extract_sequence, get_all_protein_chains, get_chain
+from .transform import apply_transformation, generate_conflict_free_chain_map, rename_chains
 
 
 def _align_structures(

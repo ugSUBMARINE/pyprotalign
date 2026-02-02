@@ -5,6 +5,17 @@ import copy
 import gemmi
 import numpy as np
 
+from .kabsch import superpose
+from .refine import iterative_superpose
+from .selection import (
+    compute_chain_center,
+    extract_ca_atoms,
+    extract_sequence,
+    get_all_protein_chains,
+    get_chain,
+)
+from .transform import apply_transformation
+
 
 def align_sequences(seq1: str, seq2: str) -> list[tuple[int | None, int | None]]:
     """Align two sequences and return paired indices.
@@ -76,8 +87,6 @@ def align_multi_chain(
     Raises:
         ValueError: If no matching protein chains found or fewer than 3 aligned pairs
     """
-    from pyprotalign.selection import extract_ca_atoms, extract_sequence, get_all_protein_chains
-
     fixed_chains = get_all_protein_chains(fixed_structure)
     mobile_chains = get_all_protein_chains(mobile_structure)
 
@@ -168,17 +177,6 @@ def align_quaternary(
     Raises:
         ValueError: If fewer than 3 aligned pairs or no matching chains found
     """
-    from pyprotalign.kabsch import superpose
-    from pyprotalign.refine import iterative_superpose
-    from pyprotalign.selection import (
-        compute_chain_center,
-        extract_ca_atoms,
-        extract_sequence,
-        get_all_protein_chains,
-        get_chain,
-    )
-    from pyprotalign.transform import apply_transformation
-
     # Get all protein chains
     fixed_chains = get_all_protein_chains(fixed_structure)
     mobile_chains = get_all_protein_chains(mobile_structure)

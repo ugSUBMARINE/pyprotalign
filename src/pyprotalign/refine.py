@@ -3,7 +3,7 @@
 import numpy as np
 from numpy.typing import NDArray
 
-from pyprotalign.kabsch import calculate_rmsd, superpose
+from .kabsch import calculate_rmsd, superpose
 
 
 def iterative_superpose(
