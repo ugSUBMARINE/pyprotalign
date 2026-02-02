@@ -17,7 +17,7 @@ Protein structure superposition using sequence alignment and iterative refinemen
 
 ### Using uv/pip
 ```bash
-uv pip install pyvolgrid
+uv pip install pyprotalign
 ```
 
 ### From source
