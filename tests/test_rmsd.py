@@ -85,3 +85,21 @@ class TestCalculateRMSD:
 
         with pytest.raises(ValueError, match="Weights shape .* incompatible"):
             calculate_rmsd(fixed, mobile, weights=weights)
+
+    def test_negative_weights_error(self) -> None:
+        """Test error on negative weights."""
+        fixed = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+        mobile = fixed.copy()
+        weights = np.array([1.0, -1.0, 1.0])
+
+        with pytest.raises(ValueError, match="Weights must be non-negative"):
+            calculate_rmsd(fixed, mobile, weights=weights)
+
+    def test_zero_sum_weights_error(self) -> None:
+        """Test error when all weights sum to zero."""
+        fixed = np.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0]])
+        mobile = fixed.copy()
+        weights = np.array([0.0, 0.0, 0.0])
+
+        with pytest.raises(ValueError, match="Sum of weights must be positive"):
+            calculate_rmsd(fixed, mobile, weights=weights)
