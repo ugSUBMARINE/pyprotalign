@@ -250,7 +250,12 @@ def align_quaternary(
             continue  # Already paired
 
         # Compute fixed chain center
-        fixed_center = compute_chain_center(fixed_chain)
+        try:
+            fixed_center = compute_chain_center(fixed_chain)
+        except ValueError:
+            if verbose:
+                print(f"  Skipping fixed chain {fixed_chain.name}: no CA atoms")
+            continue
 
         # Find closest unmatched mobile chain
         best_mobile_name = None
@@ -261,7 +266,12 @@ def align_quaternary(
                 continue
 
             mobile_temp_chain = mobile_temp_map[mobile_chain_name]
-            mobile_center = compute_chain_center(mobile_temp_chain)
+            try:
+                mobile_center = compute_chain_center(mobile_temp_chain)
+            except ValueError:
+                if verbose:
+                    print(f"  Skipping mobile chain {mobile_chain_name}: no CA atoms")
+                continue
             distance = float(np.linalg.norm(fixed_center - mobile_center))
 
             if verbose:

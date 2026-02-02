@@ -216,7 +216,11 @@ class TestAlignQuaternary:
     """Tests for align_quaternary function."""
 
     def _create_chain(
-        self, name: str, sequence: str, offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
+        self,
+        name: str,
+        sequence: str,
+        offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        missing_ca_indices: set[int] | None = None,
     ) -> gemmi.Chain:
         """Helper to create a chain with sequence and position offset.
 
@@ -224,31 +228,36 @@ class TestAlignQuaternary:
             name: Chain name
             sequence: Space-separated three-letter codes
             offset: XYZ offset to apply to all atoms
+            missing_ca_indices: Residue indices to omit CA atoms for
         """
         chain = gemmi.Chain(name)
+        missing = missing_ca_indices or set()
         residues = sequence.split()
         for i, res_name in enumerate(residues):
             res = gemmi.Residue()
             res.name = res_name
             res.seqid = gemmi.SeqId(str(i + 1))
             res.entity_type = gemmi.EntityType.Polymer
-            atom = gemmi.Atom()
-            atom.name = "CA"
-            atom.pos = gemmi.Position(float(i) + offset[0], offset[1], offset[2])
-            res.add_atom(atom)
+            if i not in missing:
+                atom = gemmi.Atom()
+                atom.name = "CA"
+                atom.pos = gemmi.Position(float(i) + offset[0], offset[1], offset[2])
+                res.add_atom(atom)
             chain.add_residue(res)
         return chain
 
-    def _create_structure(self, chains: list[tuple[str, str, tuple[float, float, float]]]) -> gemmi.Structure:
+    def _create_structure(
+        self, chains: list[tuple[str, str, tuple[float, float, float], set[int] | None]]
+    ) -> gemmi.Structure:
         """Helper to create structure with multiple chains.
 
         Args:
-            chains: List of (chain_name, sequence, offset) tuples
+            chains: List of (chain_name, sequence, offset, missing_ca_indices) tuples
         """
         structure = gemmi.Structure()
         model = gemmi.Model(1)
-        for chain_name, sequence, offset in chains:
-            chain = self._create_chain(chain_name, sequence, offset)
+        for chain_name, sequence, offset, missing_ca in chains:
+            chain = self._create_chain(chain_name, sequence, offset, missing_ca)
             model.add_chain(chain)
         structure.add_model(model)
         structure.setup_entities()
@@ -259,14 +268,14 @@ class TestAlignQuaternary:
         # Two chains, same labels, offset in Y
         fixed_st = self._create_structure(
             [
-                ("A", "ALA GLY SER", (0.0, 0.0, 0.0)),
-                ("B", "THR VAL LEU", (0.0, 10.0, 0.0)),
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU", (0.0, 10.0, 0.0), None),
             ]
         )
         mobile_st = self._create_structure(
             [
-                ("A", "ALA GLY SER", (0.0, 0.0, 0.0)),
-                ("B", "THR VAL LEU", (0.0, 10.0, 0.0)),
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU", (0.0, 10.0, 0.0), None),
             ]
         )
 
@@ -285,14 +294,14 @@ class TestAlignQuaternary:
         # Should match A->C (seed), B->D (by proximity)
         fixed_st = self._create_structure(
             [
-                ("A", "ALA GLY SER", (0.0, 0.0, 0.0)),
-                ("B", "THR VAL LEU", (0.0, 10.0, 0.0)),
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU", (0.0, 10.0, 0.0), None),
             ]
         )
         mobile_st = self._create_structure(
             [
-                ("C", "ALA GLY SER", (0.0, 0.0, 0.0)),
-                ("D", "THR VAL LEU", (0.0, 10.0, 0.0)),
+                ("C", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("D", "THR VAL LEU", (0.0, 10.0, 0.0), None),
             ]
         )
 
@@ -308,15 +317,15 @@ class TestAlignQuaternary:
         # Fixed has 3 chains, mobile has 2
         fixed_st = self._create_structure(
             [
-                ("A", "ALA GLY SER", (0.0, 0.0, 0.0)),
-                ("B", "THR VAL LEU", (0.0, 10.0, 0.0)),
-                ("C", "ILE MET PHE", (0.0, 20.0, 0.0)),
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU", (0.0, 10.0, 0.0), None),
+                ("C", "ILE MET PHE", (0.0, 20.0, 0.0), None),
             ]
         )
         mobile_st = self._create_structure(
             [
-                ("A", "ALA GLY SER", (0.0, 0.0, 0.0)),
-                ("B", "THR VAL LEU", (0.0, 10.0, 0.0)),
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU", (0.0, 10.0, 0.0), None),
             ]
         )
 
@@ -335,14 +344,14 @@ class TestAlignQuaternary:
         # Distance between centers ~20 Angstroms
         fixed_st = self._create_structure(
             [
-                ("A", "ALA GLY SER", (0.0, 0.0, 0.0)),
-                ("B", "THR VAL LEU", (0.0, 10.0, 0.0)),
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU", (0.0, 10.0, 0.0), None),
             ]
         )
         mobile_st = self._create_structure(
             [
-                ("A", "ALA GLY SER", (0.0, 0.0, 0.0)),
-                ("C", "THR VAL LEU", (0.0, -10.0, 0.0)),  # Far from B
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("C", "THR VAL LEU", (0.0, -10.0, 0.0), None),  # Far from B
             ]
         )
 
@@ -359,8 +368,8 @@ class TestAlignQuaternary:
     def test_insufficient_pairs_error(self) -> None:
         """Test error when seed chains have too few aligned pairs."""
         # Only 2 residues in seed - not enough
-        fixed_st = self._create_structure([("A", "ALA GLY", (0.0, 0.0, 0.0))])
-        mobile_st = self._create_structure([("A", "ALA GLY", (0.0, 0.0, 0.0))])
+        fixed_st = self._create_structure([("A", "ALA GLY", (0.0, 0.0, 0.0), None)])
+        mobile_st = self._create_structure([("A", "ALA GLY", (0.0, 0.0, 0.0), None)])
 
         with pytest.raises(ValueError, match="Need at least 3 aligned CA pairs in seed chains"):
             align_quaternary(fixed_st, mobile_st, distance_threshold=10.0)
@@ -370,14 +379,14 @@ class TestAlignQuaternary:
         # Multiple chains, specify B as seed
         fixed_st = self._create_structure(
             [
-                ("A", "ALA GLY SER", (0.0, 0.0, 0.0)),
-                ("B", "THR VAL LEU ILE", (0.0, 10.0, 0.0)),
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU ILE", (0.0, 10.0, 0.0), None),
             ]
         )
         mobile_st = self._create_structure(
             [
-                ("X", "ALA GLY SER", (0.0, 0.0, 0.0)),
-                ("Y", "THR VAL LEU ILE", (0.0, 10.0, 0.0)),
+                ("X", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("Y", "THR VAL LEU ILE", (0.0, 10.0, 0.0), None),
             ]
         )
 
@@ -388,3 +397,23 @@ class TestAlignQuaternary:
         # Should use B->Y as seed
         assert ("B", "Y") in chain_pairs
         assert len(chain_pairs) == 2
+
+    def test_quaternary_skips_chains_without_ca(self) -> None:
+        """Test that chains without CA atoms are skipped in matching."""
+        fixed_st = self._create_structure(
+            [
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU", (0.0, 10.0, 0.0), {0, 1, 2}),
+            ]
+        )
+        mobile_st = self._create_structure(
+            [
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("C", "THR VAL LEU", (0.0, 10.0, 0.0), {0, 1, 2}),
+            ]
+        )
+
+        _, _, chain_pairs = align_quaternary(fixed_st, mobile_st, distance_threshold=15.0, verbose=False)
+
+        assert len(chain_pairs) == 1
+        assert ("A", "A") in chain_pairs
