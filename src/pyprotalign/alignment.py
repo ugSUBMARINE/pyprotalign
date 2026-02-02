@@ -9,7 +9,7 @@ from .kabsch import superpose
 from .refine import iterative_superpose
 from .selection import (
     compute_chain_center,
-    extract_ca_atoms,
+    extract_ca_atoms_by_residue,
     extract_sequence,
     get_all_protein_chains,
     get_chain,
@@ -117,8 +117,8 @@ def align_multi_chain(
         pairs = align_sequences(fixed_seq, mobile_seq)
 
         # Extract CA atoms
-        fixed_cas = extract_ca_atoms(fixed_chain)
-        mobile_cas = extract_ca_atoms(mobile_chain)
+        fixed_cas = extract_ca_atoms_by_residue(fixed_chain)
+        mobile_cas = extract_ca_atoms_by_residue(mobile_chain)
 
         # Build coordinate arrays for this chain
         for fix_idx, mob_idx in pairs:
@@ -127,6 +127,8 @@ def align_multi_chain(
                 if fix_idx < len(fixed_cas) and mob_idx < len(mobile_cas):
                     fixed_ca = fixed_cas[fix_idx]
                     mobile_ca = mobile_cas[mob_idx]
+                    if fixed_ca is None or mobile_ca is None:
+                        continue
                     fixed_coords_list.append([fixed_ca.pos.x, fixed_ca.pos.y, fixed_ca.pos.z])
                     mobile_coords_list.append([mobile_ca.pos.x, mobile_ca.pos.y, mobile_ca.pos.z])
                     chain_ids.append(chain_name)
@@ -196,8 +198,8 @@ def align_quaternary(
     mobile_seq = extract_sequence(seed_mobile)
     pairs = align_sequences(fixed_seq, mobile_seq)
 
-    fixed_cas = extract_ca_atoms(seed_fixed)
-    mobile_cas = extract_ca_atoms(seed_mobile)
+    fixed_cas = extract_ca_atoms_by_residue(seed_fixed)
+    mobile_cas = extract_ca_atoms_by_residue(seed_mobile)
 
     # Extract seed coordinates
     seed_fixed_coords = []
@@ -207,6 +209,8 @@ def align_quaternary(
             if fix_idx < len(fixed_cas) and mob_idx < len(mobile_cas):
                 fixed_ca = fixed_cas[fix_idx]
                 mobile_ca = mobile_cas[mob_idx]
+                if fixed_ca is None or mobile_ca is None:
+                    continue
                 seed_fixed_coords.append([fixed_ca.pos.x, fixed_ca.pos.y, fixed_ca.pos.z])
                 seed_mobile_coords.append([mobile_ca.pos.x, mobile_ca.pos.y, mobile_ca.pos.z])
 
@@ -290,8 +294,8 @@ def align_quaternary(
         pairs = align_sequences(fixed_seq, mobile_seq)
 
         # Extract CA atoms
-        fixed_cas = extract_ca_atoms(fixed_chain)
-        mobile_cas = extract_ca_atoms(mobile_chain)
+        fixed_cas = extract_ca_atoms_by_residue(fixed_chain)
+        mobile_cas = extract_ca_atoms_by_residue(mobile_chain)
 
         # Pool coordinates
         for fix_idx, mob_idx in pairs:
@@ -299,6 +303,8 @@ def align_quaternary(
                 if fix_idx < len(fixed_cas) and mob_idx < len(mobile_cas):
                     fixed_ca = fixed_cas[fix_idx]
                     mobile_ca = mobile_cas[mob_idx]
+                    if fixed_ca is None or mobile_ca is None:
+                        continue
                     fixed_coords_list.append([fixed_ca.pos.x, fixed_ca.pos.y, fixed_ca.pos.z])
                     mobile_coords_list.append([mobile_ca.pos.x, mobile_ca.pos.y, mobile_ca.pos.z])
 

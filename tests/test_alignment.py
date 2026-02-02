@@ -88,38 +88,41 @@ class TestAlignSequences:
 class TestAlignMultiChain:
     """Tests for align_multi_chain function."""
 
-    def _create_chain(self, name: str, sequence: str) -> gemmi.Chain:
+    def _create_chain(self, name: str, sequence: str, missing_ca_indices: set[int] | None = None) -> gemmi.Chain:
         """Helper to create a chain with sequence.
 
         Args:
             name: Chain name
             sequence: Space-separated three-letter codes (e.g. "ALA GLY SER")
+            missing_ca_indices: Residue indices to omit CA atoms for
         """
         chain = gemmi.Chain(name)
+        missing = missing_ca_indices or set()
         residues = sequence.split()
         for i, res_name in enumerate(residues):
             res = gemmi.Residue()
             res.name = res_name  # Three-letter code
             res.seqid = gemmi.SeqId(str(i + 1))
             res.entity_type = gemmi.EntityType.Polymer
-            # Add CA atom
-            atom = gemmi.Atom()
-            atom.name = "CA"
-            atom.pos = gemmi.Position(float(i), 0.0, 0.0)
-            res.add_atom(atom)
+            if i not in missing:
+                # Add CA atom
+                atom = gemmi.Atom()
+                atom.name = "CA"
+                atom.pos = gemmi.Position(float(i), 0.0, 0.0)
+                res.add_atom(atom)
             chain.add_residue(res)
         return chain
 
-    def _create_structure(self, chains: list[tuple[str, str]]) -> gemmi.Structure:
+    def _create_structure(self, chains: list[tuple[str, str, set[int] | None]]) -> gemmi.Structure:
         """Helper to create structure with multiple chains.
 
         Args:
-            chains: List of (chain_name, sequence) tuples
+            chains: List of (chain_name, sequence, missing_ca_indices) tuples
         """
         structure = gemmi.Structure()
         model = gemmi.Model(1)
-        for chain_name, sequence in chains:
-            chain = self._create_chain(chain_name, sequence)
+        for chain_name, sequence, missing_ca in chains:
+            chain = self._create_chain(chain_name, sequence, missing_ca)
             model.add_chain(chain)
         structure.add_model(model)
         structure.setup_entities()
@@ -128,8 +131,8 @@ class TestAlignMultiChain:
     def test_matching_chains(self) -> None:
         """Test alignment with matching chains."""
         # Create two structures with chains A and B
-        fixed_st = self._create_structure([("A", "ALA GLY"), ("B", "SER THR")])
-        mobile_st = self._create_structure([("A", "ALA GLY"), ("B", "SER THR")])
+        fixed_st = self._create_structure([("A", "ALA GLY", None), ("B", "SER THR", None)])
+        mobile_st = self._create_structure([("A", "ALA GLY", None), ("B", "SER THR", None)])
 
         fixed_coords, mobile_coords, chain_ids = align_multi_chain(fixed_st, mobile_st)
 
@@ -142,8 +145,8 @@ class TestAlignMultiChain:
     def test_different_chain_counts(self) -> None:
         """Test structures with different chain counts."""
         # Fixed has A, B, C; mobile has A, B
-        fixed_st = self._create_structure([("A", "ALA GLY"), ("B", "SER THR"), ("C", "VAL LEU")])
-        mobile_st = self._create_structure([("A", "ALA GLY"), ("B", "SER THR")])
+        fixed_st = self._create_structure([("A", "ALA GLY", None), ("B", "SER THR", None), ("C", "VAL LEU", None)])
+        mobile_st = self._create_structure([("A", "ALA GLY", None), ("B", "SER THR", None)])
 
         fixed_coords, mobile_coords, chain_ids = align_multi_chain(fixed_st, mobile_st)
 
@@ -153,8 +156,8 @@ class TestAlignMultiChain:
 
     def test_no_matching_chains(self) -> None:
         """Test error when no matching chains."""
-        fixed_st = self._create_structure([("A", "ALA GLY")])
-        mobile_st = self._create_structure([("B", "SER THR")])
+        fixed_st = self._create_structure([("A", "ALA GLY", None)])
+        mobile_st = self._create_structure([("B", "SER THR", None)])
 
         with pytest.raises(ValueError, match="No matching protein chains found"):
             align_multi_chain(fixed_st, mobile_st)
@@ -162,16 +165,16 @@ class TestAlignMultiChain:
     def test_insufficient_aligned_pairs(self) -> None:
         """Test error when fewer than 3 aligned pairs."""
         # Only 2 residues total
-        fixed_st = self._create_structure([("A", "ALA GLY")])
-        mobile_st = self._create_structure([("A", "ALA GLY")])
+        fixed_st = self._create_structure([("A", "ALA GLY", None)])
+        mobile_st = self._create_structure([("A", "ALA GLY", None)])
 
         with pytest.raises(ValueError, match="Need at least 3 aligned CA pairs"):
             align_multi_chain(fixed_st, mobile_st)
 
     def test_coordinate_extraction(self) -> None:
         """Test that coordinates are correctly extracted."""
-        fixed_st = self._create_structure([("A", "ALA GLY SER")])
-        mobile_st = self._create_structure([("A", "ALA GLY SER")])
+        fixed_st = self._create_structure([("A", "ALA GLY SER", None)])
+        mobile_st = self._create_structure([("A", "ALA GLY SER", None)])
 
         fixed_coords, mobile_coords, chain_ids = align_multi_chain(fixed_st, mobile_st)
 
@@ -187,13 +190,26 @@ class TestAlignMultiChain:
     def test_chain_order_deterministic(self) -> None:
         """Test that chain order is deterministic (sorted)."""
         # Create with chains in different order
-        fixed_st = self._create_structure([("C", "ALA GLY"), ("A", "SER THR"), ("B", "VAL LEU")])
-        mobile_st = self._create_structure([("B", "VAL LEU"), ("A", "SER THR"), ("C", "ALA GLY")])
+        fixed_st = self._create_structure([("C", "ALA GLY", None), ("A", "SER THR", None), ("B", "VAL LEU", None)])
+        mobile_st = self._create_structure([("B", "VAL LEU", None), ("A", "SER THR", None), ("C", "ALA GLY", None)])
 
         _, _, chain_ids = align_multi_chain(fixed_st, mobile_st)
 
         # Should be in sorted order: A, A, B, B, C, C
         assert chain_ids == ["A", "A", "B", "B", "C", "C"]
+
+    def test_missing_ca_atoms_do_not_shift_indices(self) -> None:
+        """Test alignment when CA atoms are missing in fixed or mobile."""
+        fixed_st = self._create_structure([("A", "ALA GLY SER THR", {1})])
+        mobile_st = self._create_structure([("A", "ALA GLY SER THR", None)])
+
+        fixed_coords, mobile_coords, chain_ids = align_multi_chain(fixed_st, mobile_st)
+
+        assert len(fixed_coords) == 3
+        assert len(mobile_coords) == 3
+        assert chain_ids == ["A", "A", "A"]
+        assert [float(x) for x in fixed_coords[:, 0]] == [0.0, 2.0, 3.0]
+        assert [float(x) for x in mobile_coords[:, 0]] == [0.0, 2.0, 3.0]
 
 
 class TestAlignQuaternary:

@@ -12,7 +12,7 @@ from .alignment import align_multi_chain, align_quaternary, align_sequences
 from .io import load_structure, write_structure
 from .kabsch import calculate_rmsd, superpose
 from .refine import iterative_superpose
-from .selection import extract_ca_atoms, extract_sequence, get_all_protein_chains, get_chain
+from .selection import extract_ca_atoms_by_residue, extract_sequence, get_all_protein_chains, get_chain
 from .transform import apply_transformation, generate_conflict_free_chain_map, rename_chains
 
 
@@ -89,8 +89,8 @@ def _align_structures(
         pairs = align_sequences(fixed_seq, mobile_seq)
 
         # Extract CA atoms
-        fixed_cas = extract_ca_atoms(fixed_chain)
-        mobile_cas = extract_ca_atoms(mobile_chain)
+        fixed_cas = extract_ca_atoms_by_residue(fixed_chain)
+        mobile_cas = extract_ca_atoms_by_residue(mobile_chain)
 
         # Filter aligned pairs (exclude gaps)
         fixed_indices = []
@@ -99,6 +99,8 @@ def _align_structures(
             if fix_idx is not None and mob_idx is not None:
                 # Check that CA atoms exist
                 if fix_idx < len(fixed_cas) and mob_idx < len(mobile_cas):
+                    if fixed_cas[fix_idx] is None or mobile_cas[mob_idx] is None:
+                        continue
                     fixed_indices.append(fix_idx)
                     mobile_indices.append(mob_idx)
 
@@ -108,10 +110,18 @@ def _align_structures(
         print(f"Aligned: {len(fixed_indices)} CA atom pairs")
 
         # Extract coordinates
-        fixed_coords = np.array([[fixed_cas[i].pos.x, fixed_cas[i].pos.y, fixed_cas[i].pos.z] for i in fixed_indices])
-        mobile_coords = np.array(
-            [[mobile_cas[i].pos.x, mobile_cas[i].pos.y, mobile_cas[i].pos.z] for i in mobile_indices]
-        )
+        fixed_coords_list = []
+        mobile_coords_list = []
+        for fix_idx, mob_idx in zip(fixed_indices, mobile_indices, strict=True):
+            fixed_ca = fixed_cas[fix_idx]
+            mobile_ca = mobile_cas[mob_idx]
+            if fixed_ca is None or mobile_ca is None:
+                continue
+            fixed_coords_list.append([fixed_ca.pos.x, fixed_ca.pos.y, fixed_ca.pos.z])
+            mobile_coords_list.append([mobile_ca.pos.x, mobile_ca.pos.y, mobile_ca.pos.z])
+
+        fixed_coords = np.array(fixed_coords_list)
+        mobile_coords = np.array(mobile_coords_list)
         info_str = f"{fixed_chain.name} → {mobile_chain.name}"
 
     # Compute transformation (not needed for quaternary mode, already computed)

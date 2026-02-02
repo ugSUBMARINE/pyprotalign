@@ -106,6 +106,23 @@ def extract_ca_atoms(chain: gemmi.Chain) -> list[gemmi.Atom]:
     return ca_atoms
 
 
+def extract_ca_atoms_by_residue(chain: gemmi.Chain) -> list[gemmi.Atom | None]:
+    """Extract CA atoms aligned to polymer residue indices.
+
+    Args:
+        chain: Input gemmi Chain
+
+    Returns:
+        List of CA atoms or None, one entry per polymer residue
+    """
+    polymer = chain.get_polymer()
+    ca_atoms: list[gemmi.Atom | None] = []
+    for residue in polymer:
+        ca = residue.find_atom("CA", "*")
+        ca_atoms.append(ca if ca else None)
+    return ca_atoms
+
+
 def compute_chain_center(chain: gemmi.Chain) -> NDArray[np.floating]:
     """Compute geometric center of chain from CA atoms.
 
