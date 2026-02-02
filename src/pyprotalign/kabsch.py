@@ -50,7 +50,7 @@ def superpose(
             raise ValueError(f"Weights shape {weights.shape} incompatible with coordinates ({n_points}, 3)")
         if np.any(weights < 0):
             raise ValueError("Weights must be non-negative")
-        if np.sum(weights) == 0:
+        if np.sum(weights) <= 0:
             raise ValueError("Sum of weights must be positive")
 
     # Normalize weights
@@ -117,6 +117,10 @@ def calculate_rmsd(
         weights = np.asarray(weights, dtype=float)
         if weights.shape != (n_points,):
             raise ValueError(f"Weights shape {weights.shape} incompatible with coordinates ({n_points}, 3)")
+        if np.any(weights < 0):
+            raise ValueError("Weights must be non-negative")
+        if np.sum(weights) <= 0:
+            raise ValueError("Sum of weights must be positive")
 
     # Normalize weights
     weights = weights / np.sum(weights)
