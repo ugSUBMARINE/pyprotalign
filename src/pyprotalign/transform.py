@@ -99,10 +99,10 @@ def rename_chains(structure: gemmi.Structure, chain_map: dict[str, str]) -> None
 
     # Step 1: Rename to temporary names to avoid collisions
     temp_map: dict[str, str] = {}
-    for model in structure:
-        for i, chain in enumerate(model):
+    for model_index, model in enumerate(structure):
+        for chain_index, chain in enumerate(model):
             if chain.name in filtered_map:
-                temp_name = f"__TEMP_{i}__"
+                temp_name = f"__CHN_{model_index}_{chain_index}__"
                 temp_map[temp_name] = filtered_map[chain.name]
                 chain.name = temp_name
 
