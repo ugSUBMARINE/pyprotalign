@@ -1,6 +1,7 @@
 """Sequence alignment operations."""
 
 import copy
+import logging
 
 import gemmi
 import numpy as np
@@ -15,6 +16,8 @@ from .selection import (
     get_chain,
 )
 from .transform import apply_transformation
+
+logger = logging.getLogger(__name__)
 
 
 def align_sequences(seq1: str, seq2: str) -> list[tuple[int | None, int | None]]:
@@ -151,7 +154,6 @@ def align_quaternary(
     refine: bool = False,
     cutoff_factor: float = 2.0,
     max_cycles: int = 5,
-    verbose: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, list[tuple[str, str]]]:
     """Quaternary structure alignment with smart chain matching.
 
@@ -168,8 +170,6 @@ def align_quaternary(
         refine: Enable iterative refinement for both seed and final alignment
         cutoff_factor: Outlier rejection cutoff for refinement
         max_cycles: Maximum refinement cycles
-        verbose: Print detailed chain matching information
-
     Returns:
         Tuple of (fixed_coords, mobile_coords, chain_pairs):
         - fixed_coords: Nx3 array of CA coordinates from fixed structure
@@ -190,8 +190,9 @@ def align_quaternary(
     seed_fixed = get_chain(fixed_structure, seed_fixed_chain)
     seed_mobile = get_chain(mobile_structure, seed_mobile_chain)
 
-    if verbose:
-        print(f"Seed alignment: {seed_fixed.name} → {seed_mobile.name}")
+    debug_enabled = logger.isEnabledFor(logging.DEBUG)
+    if debug_enabled:
+        logger.debug("Seed alignment: %s → %s", seed_fixed.name, seed_mobile.name)
 
     # Align seed chains to establish initial transformation
     fixed_seq = extract_sequence(seed_fixed)
@@ -223,7 +224,7 @@ def align_quaternary(
     # Compute initial transformation
     if refine:
         initial_rotation, initial_translation, _, _ = iterative_superpose(
-            seed_fixed_arr, seed_mobile_arr, max_cycles=max_cycles, cutoff_factor=cutoff_factor, verbose=verbose
+            seed_fixed_arr, seed_mobile_arr, max_cycles=max_cycles, cutoff_factor=cutoff_factor
         )
     else:
         initial_rotation, initial_translation = superpose(seed_fixed_arr, seed_mobile_arr)
@@ -232,8 +233,8 @@ def align_quaternary(
     mobile_temp = copy.deepcopy(mobile_structure)
     apply_transformation(mobile_temp, initial_rotation, initial_translation)
 
-    if verbose:
-        print("Chain center distances after seed alignment:")
+    if debug_enabled:
+        logger.debug("Chain center distances after seed alignment:")
 
     # Match chains by proximity
     chain_pairs: list[tuple[str, str]] = [(seed_fixed.name, seed_mobile.name)]
@@ -253,8 +254,8 @@ def align_quaternary(
         try:
             fixed_center = compute_chain_center(fixed_chain)
         except ValueError:
-            if verbose:
-                print(f"  Skipping fixed chain {fixed_chain.name}: no CA atoms")
+            if debug_enabled:
+                logger.debug("  Skipping fixed chain %s: no CA atoms", fixed_chain.name)
             continue
 
         # Find closest unmatched mobile chain
@@ -269,14 +270,14 @@ def align_quaternary(
             try:
                 mobile_center = compute_chain_center(mobile_temp_chain)
             except ValueError:
-                if verbose:
-                    print(f"  Skipping mobile chain {mobile_chain_name}: no CA atoms")
+                if debug_enabled:
+                    logger.debug("  Skipping mobile chain %s: no CA atoms", mobile_chain_name)
                 continue
             distance = float(np.linalg.norm(fixed_center - mobile_center))
 
-            if verbose:
+            if debug_enabled:
                 status = "✓" if distance <= distance_threshold else "✗"
-                print(f"  {fixed_chain.name} ↔ {mobile_chain_name}: {distance:.2f} Å {status}")
+                logger.debug("  %s ↔ %s: %.2f Å %s", fixed_chain.name, mobile_chain_name, distance, status)
 
             if distance < best_distance:
                 best_distance = distance

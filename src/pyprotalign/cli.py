@@ -1,6 +1,7 @@
 """Command-line interface for pyprotalign."""
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -14,6 +15,13 @@ from .kabsch import calculate_rmsd, superpose
 from .refine import iterative_superpose
 from .selection import extract_ca_atoms_by_residue, extract_sequence, get_all_protein_chains, get_chain
 from .transform import apply_transformation, generate_conflict_free_chain_map, rename_chains
+
+logger = logging.getLogger(__name__)
+
+
+def _configure_logging(verbose: bool) -> None:
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(level=level, format="%(message)s")
 
 
 def _align_structures(
@@ -34,8 +42,7 @@ def _align_structures(
     # Choose alignment mode
     if args.quaternary:
         # Quaternary alignment with smart chain matching
-        if args.verbose:
-            print("=== Quaternary Alignment ===")
+        logger.debug("=== Quaternary Alignment ===")
         fixed_coords, mobile_coords, chain_pairs = align_quaternary(
             fixed_st,
             mobile_st,
@@ -45,24 +52,23 @@ def _align_structures(
             refine=args.refine,
             cutoff_factor=args.cutoff,
             max_cycles=args.cycles,
-            verbose=args.verbose,
         )
 
-        # Print chain pairing information
-        print("Quaternary alignment:")
+        # Log chain pairing information
+        logger.info("Quaternary alignment:")
         fixed_chains = get_all_protein_chains(fixed_st)
         fixed_chain_names = {chain.name for chain in fixed_chains}
         paired_fixed = {pair[0] for pair in chain_pairs}
 
         for fixed_name, mobile_name in chain_pairs:
-            print(f"  {fixed_name} → {mobile_name} (matched)")
+            logger.info("  %s → %s (matched)", fixed_name, mobile_name)
 
         # Show unmatched chains
         unmatched_fixed = fixed_chain_names - paired_fixed
         for fixed_name in sorted(unmatched_fixed):
-            print(f"  {fixed_name} → - (no match)")
+            logger.info("  %s → - (no match)", fixed_name)
 
-        print(f"Aligned: {len(fixed_coords)} CA pairs across {len(chain_pairs)} chain pairs")
+        logger.info("Aligned: %d CA pairs across %d chain pairs", len(fixed_coords), len(chain_pairs))
         info_str = f"{len(chain_pairs)} chain pairs"
 
     elif args.global_mode:
@@ -70,8 +76,8 @@ def _align_structures(
         fixed_coords, mobile_coords, chain_ids = align_multi_chain(fixed_st, mobile_st)
         # Count chains and pairs
         unique_chains = sorted(set(chain_ids))
-        print(f"Chains: {', '.join(unique_chains)}")
-        print(f"Aligned: {len(fixed_coords)} CA atom pairs across {len(unique_chains)} chains")
+        logger.info("Chains: %s", ", ".join(unique_chains))
+        logger.info("Aligned: %d CA atom pairs across %d chains", len(fixed_coords), len(unique_chains))
         info_str = f"{len(unique_chains)} chains"
     else:
         # Single-chain alignment
@@ -82,8 +88,8 @@ def _align_structures(
         fixed_seq = extract_sequence(fixed_chain)
         mobile_seq = extract_sequence(mobile_chain)
 
-        print(f"Fixed:  chain {fixed_chain.name}, {len(fixed_seq)} residues")
-        print(f"Mobile: chain {mobile_chain.name}, {len(mobile_seq)} residues")
+        logger.info("Fixed:  chain %s, %d residues", fixed_chain.name, len(fixed_seq))
+        logger.info("Mobile: chain %s, %d residues", mobile_chain.name, len(mobile_seq))
 
         # Align sequences
         pairs = align_sequences(fixed_seq, mobile_seq)
@@ -107,7 +113,7 @@ def _align_structures(
         if len(fixed_indices) < 3:
             raise ValueError(f"Need at least 3 aligned CA pairs, found {len(fixed_indices)}")
 
-        print(f"Aligned: {len(fixed_indices)} CA atom pairs")
+        logger.info("Aligned: %d CA atom pairs", len(fixed_indices))
 
         # Extract coordinates
         fixed_coords_list = []
@@ -127,43 +133,39 @@ def _align_structures(
     # Compute transformation (not needed for quaternary mode, already computed)
     if not args.quaternary:
         if args.refine:
-            if args.verbose:
-                print("=== Final Refinement ===")
+            logger.debug("=== Final Refinement ===")
             rotation, translation, mask, rmsd = iterative_superpose(
-                fixed_coords, mobile_coords, max_cycles=args.cycles, cutoff_factor=args.cutoff, verbose=args.verbose
+                fixed_coords, mobile_coords, max_cycles=args.cycles, cutoff_factor=args.cutoff
             )
             n_used = np.sum(mask)
             n_rejected = len(mask) - n_used
-            if not args.verbose:
-                print(f"Refinement: {n_used} pairs retained, {n_rejected} rejected")
+            logger.info("Refinement: %d pairs retained, %d rejected", n_used, n_rejected)
         else:
             rotation, translation = superpose(fixed_coords, mobile_coords)
             # Calculate RMSD for reporting
             mobile_transformed = mobile_coords @ rotation.T + translation
             rmsd = calculate_rmsd(fixed_coords, mobile_transformed)
 
-        print(f"RMSD: {rmsd:.3f} Å")
+        logger.info("RMSD: %.3f Å", rmsd)
 
         # Apply transformation to entire mobile structure
         apply_transformation(mobile_st, rotation, translation)
     else:
         # Quaternary mode: compute final transformation with optional refinement
         if args.refine:
-            if args.verbose:
-                print("=== Final Refinement ===")
+            logger.debug("=== Final Refinement ===")
             rotation, translation, mask, rmsd = iterative_superpose(
-                fixed_coords, mobile_coords, max_cycles=args.cycles, cutoff_factor=args.cutoff, verbose=args.verbose
+                fixed_coords, mobile_coords, max_cycles=args.cycles, cutoff_factor=args.cutoff
             )
             n_used = np.sum(mask)
             n_rejected = len(mask) - n_used
-            if not args.verbose:
-                print(f"Refinement: {n_used} CA pairs retained, {n_rejected} rejected")
+            logger.info("Refinement: %d CA pairs retained, %d rejected", n_used, n_rejected)
         else:
             rotation, translation = superpose(fixed_coords, mobile_coords)
             mobile_transformed = mobile_coords @ rotation.T + translation
             rmsd = calculate_rmsd(fixed_coords, mobile_transformed)
 
-        print(f"RMSD: {rmsd:.3f} Å")
+        logger.info("RMSD: %.3f Å", rmsd)
 
         # Apply transformation
         apply_transformation(mobile_st, rotation, translation)
@@ -171,25 +173,24 @@ def _align_structures(
         # Rename mobile chains to match fixed (if requested)
         if args.rename_chains:
             chain_rename_map = generate_conflict_free_chain_map(mobile_st, chain_pairs)
-            if args.verbose:
-                # Get all mobile chain names for complete reporting
-                all_mobile_chains = sorted({chain.name for model in mobile_st for chain in model})
-                aligned_renames = {mobile_name: fixed_name for fixed_name, mobile_name in chain_pairs}
+            # Get all mobile chain names for complete reporting
+            all_mobile_chains = sorted({chain.name for model in mobile_st for chain in model})
+            aligned_renames = {mobile_name: fixed_name for fixed_name, mobile_name in chain_pairs}
 
-                print("Chain renaming:")
-                for chain_name in all_mobile_chains:
-                    if chain_name in chain_rename_map:
-                        new_name = chain_rename_map[chain_name]
-                        if chain_name in aligned_renames and aligned_renames[chain_name] == new_name:
-                            print(f"  {chain_name} → {new_name} (aligned)")
-                        else:
-                            print(f"  {chain_name} → {new_name} (unaligned, renamed to avoid conflict)")
-                    elif chain_name in aligned_renames:
-                        # Identity rename (same name), aligned but not in map
-                        print(f"  {chain_name} → {chain_name} (aligned)")
+            logger.debug("Chain renaming:")
+            for chain_name in all_mobile_chains:
+                if chain_name in chain_rename_map:
+                    new_name = chain_rename_map[chain_name]
+                    if chain_name in aligned_renames and aligned_renames[chain_name] == new_name:
+                        logger.debug("  %s → %s (aligned)", chain_name, new_name)
                     else:
-                        # Unaligned chain that keeps its name
-                        print(f"  {chain_name} → {chain_name} (unaligned)")
+                        logger.debug("  %s → %s (unaligned, renamed to avoid conflict)", chain_name, new_name)
+                elif chain_name in aligned_renames:
+                    # Identity rename (same name), aligned but not in map
+                    logger.debug("  %s → %s (aligned)", chain_name, chain_name)
+                else:
+                    # Unaligned chain that keeps its name
+                    logger.debug("  %s → %s (unaligned)", chain_name, chain_name)
             rename_chains(mobile_st, chain_rename_map)
 
     return mobile_st, rmsd, info_str
@@ -281,6 +282,7 @@ def main() -> None:
     )
 
     args = parser.parse_args()
+    _configure_logging(args.verbose)
 
     # Validate mutual exclusivity
     if args.global_mode and args.quaternary:
@@ -302,10 +304,10 @@ def main() -> None:
 
             # Write output
             write_structure(mobile_st, args.output)
-            print(f"Superposed structure written to: {args.output}")
+            logger.info("Superposed structure written to: %s", args.output)
 
         except Exception as e:
-            print(f"Error: {e}", file=sys.stderr)
+            logger.error("Error: %s", e)
             sys.exit(1)
     else:
         # Batch mode
@@ -313,7 +315,7 @@ def main() -> None:
             # Load fixed structure once
             fixed_st = load_structure(args.fixed)
         except Exception as e:
-            print(f"Error loading fixed structure: {e}", file=sys.stderr)
+            logger.error("Error loading fixed structure: %s", e)
             sys.exit(1)
 
         # Parse suffix from --output (strip extension if present)
@@ -330,11 +332,12 @@ def main() -> None:
         num_mobile = len(args.mobile)
         for idx, mobile_file in enumerate(args.mobile, 1):
             mobile_path = Path(mobile_file)
-            print(f"Processing {idx}/{num_mobile}: {mobile_path.name}")
+            logger.info("Processing %d/%d: %s", idx, num_mobile, mobile_path.name)
 
             # Skip if mobile file is the same as fixed file
             if mobile_path.resolve() == Path(args.fixed).resolve():
-                print("Skipping: same as fixed structure\n")
+                logger.info("Skipping: same as fixed structure")
+                logger.info("")
                 continue
 
             try:
@@ -358,7 +361,7 @@ def main() -> None:
                     }
                 )
 
-                print(f"Output: {output_file.name}")
+                logger.info("Output: %s", output_file.name)
 
             except Exception as e:
                 results.append(
@@ -370,32 +373,32 @@ def main() -> None:
                         "output": None,
                     }
                 )
-                print(f"  Error: {e}")
+                logger.error("  Error: %s", e)
 
-            print()
+            logger.info("")
 
-        # Print summary
-        print("=" * 80)
-        print("SUMMARY")
-        print("=" * 80)
+        # Log summary
+        logger.info("%s", "=" * 80)
+        logger.info("SUMMARY")
+        logger.info("%s", "=" * 80)
         successful = sum(1 for r in results if r["status"] == "OK")
         failed = sum(1 for r in results if r["status"] == "FAILED")
 
-        print(f"Total: {len(results)} | Successful: {successful} | Failed: {failed}")
-        print()
+        logger.info("Total: %d | Successful: %d | Failed: %d", len(results), successful, failed)
+        logger.info("")
 
         if successful > 0:
-            print("Successful alignments:")
+            logger.info("Successful alignments:")
             for r in results:
                 if r["status"] == "OK":
-                    print(f"  {r['file']:40s} RMSD: {r['rmsd']:.3f} Å → {r['output']}")
+                    logger.info("  %-40s RMSD: %.3f Å → %s", r["file"], r["rmsd"], r["output"])
 
         if failed > 0:
-            print()
-            print("Failed alignments:")
+            logger.info("")
+            logger.info("Failed alignments:")
             for r in results:
                 if r["status"] == "FAILED":
-                    print(f"  {r['file']:40s} Error: {r['info']}")
+                    logger.info("  %-40s Error: %s", r["file"], r["info"])
 
         sys.exit(0 if failed == 0 else 1)
 

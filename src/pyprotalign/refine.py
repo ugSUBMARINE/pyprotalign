@@ -1,9 +1,13 @@
 """Iterative refinement for structure superposition."""
 
+import logging
+
 import numpy as np
 from numpy.typing import NDArray
 
 from .kabsch import calculate_rmsd, superpose
+
+logger = logging.getLogger(__name__)
 
 
 def iterative_superpose(
@@ -11,7 +15,6 @@ def iterative_superpose(
     mobile: NDArray[np.floating],
     max_cycles: int = 5,
     cutoff_factor: float = 2.0,
-    verbose: bool = False,
 ) -> tuple[NDArray[np.floating], NDArray[np.floating], NDArray[np.bool_], float]:
     """Iteratively superpose structures, rejecting outliers each cycle.
 
@@ -26,8 +29,6 @@ def iterative_superpose(
         mobile: Mobile coordinates, shape (N, 3)
         max_cycles: Maximum refinement cycles
         cutoff_factor: Reject pairs beyond cutoff_factor * RMSD
-        verbose: Print detailed progress for each cycle
-
     Returns:
         rotation: Final rotation matrix, shape (3, 3)
         translation: Final translation vector, shape (3,)
@@ -44,8 +45,9 @@ def iterative_superpose(
     mask = np.ones(n_points, dtype=bool)
     prev_rmsd = float("inf")
 
-    if verbose:
-        print("  Refinement cycles:")
+    debug_enabled = logger.isEnabledFor(logging.DEBUG)
+    if debug_enabled:
+        logger.debug("  Refinement cycles:")
 
     for cycle in range(max_cycles):
         # Superpose current subset
@@ -57,14 +59,14 @@ def iterative_superpose(
         # Calculate RMSD for all pairs
         rmsd = calculate_rmsd(fixed[mask], mobile_transformed[mask])
 
-        if verbose:
+        if debug_enabled:
             n_used = np.sum(mask)
-            print(f"    Cycle {cycle + 1}: {n_used} pairs, RMSD = {rmsd:.3f} Å")
+            logger.debug("    Cycle %d: %d pairs, RMSD = %.3f Å", cycle + 1, n_used, rmsd)
 
         # Check convergence
         if rmsd >= prev_rmsd * 0.999:  # Allow 0.1% tolerance
-            if verbose:
-                print("    Converged (RMSD stopped improving)")
+            if debug_enabled:
+                logger.debug("    Converged (RMSD stopped improving)")
             break
 
         prev_rmsd = rmsd
@@ -82,8 +84,8 @@ def iterative_superpose(
 
         if n_rejected == 0:
             # No more outliers, converged
-            if verbose:
-                print("    Converged (no more outliers)")
+            if debug_enabled:
+                logger.debug("    Converged (no more outliers)")
             break
 
         mask = new_mask

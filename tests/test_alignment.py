@@ -413,7 +413,7 @@ class TestAlignQuaternary:
             ]
         )
 
-        _, _, chain_pairs = align_quaternary(fixed_st, mobile_st, distance_threshold=15.0, verbose=False)
+        _, _, chain_pairs = align_quaternary(fixed_st, mobile_st, distance_threshold=15.0)
 
         assert len(chain_pairs) == 1
         assert ("A", "A") in chain_pairs
