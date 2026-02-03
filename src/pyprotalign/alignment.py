@@ -12,6 +12,7 @@ from .selection import (
     compute_chain_center,
     extract_ca_atoms_by_residue,
     extract_sequence,
+    filter_ca_pairs_by_quality,
     get_all_protein_chains,
     get_chain,
 )
@@ -70,7 +71,10 @@ def align_sequences(seq1: str, seq2: str) -> list[tuple[int | None, int | None]]
 
 
 def align_multi_chain(
-    fixed_structure: gemmi.Structure, mobile_structure: gemmi.Structure
+    fixed_structure: gemmi.Structure,
+    mobile_structure: gemmi.Structure,
+    min_plddt: float | None = None,
+    max_bfactor: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """Align multiple chains by matching chain IDs and pooling coordinates.
 
@@ -80,6 +84,8 @@ def align_multi_chain(
     Args:
         fixed_structure: Fixed structure with setup entities
         mobile_structure: Mobile structure with setup entities
+        min_plddt: Minimum pLDDT threshold for quality filtering (optional)
+        max_bfactor: Maximum B-factor threshold for quality filtering (optional)
 
     Returns:
         Tuple of (fixed_coords, mobile_coords, chain_ids):
@@ -124,6 +130,8 @@ def align_multi_chain(
         mobile_cas = extract_ca_atoms_by_residue(mobile_chain)
 
         # Build coordinate arrays for this chain
+        chain_fixed_indices = []
+        chain_mobile_indices = []
         for fix_idx, mob_idx in pairs:
             if fix_idx is not None and mob_idx is not None:
                 # Check that CA atoms exist
@@ -132,9 +140,33 @@ def align_multi_chain(
                     mobile_ca = mobile_cas[mob_idx]
                     if fixed_ca is None or mobile_ca is None:
                         continue
-                    fixed_coords_list.append([fixed_ca.pos.x, fixed_ca.pos.y, fixed_ca.pos.z])
-                    mobile_coords_list.append([mobile_ca.pos.x, mobile_ca.pos.y, mobile_ca.pos.z])
-                    chain_ids.append(chain_name)
+                    chain_fixed_indices.append(fix_idx)
+                    chain_mobile_indices.append(mob_idx)
+
+        # Apply quality filtering if requested
+        if min_plddt is not None or max_bfactor is not None:
+            aligned_fixed_cas = [fixed_cas[i] for i in chain_fixed_indices]
+            aligned_mobile_cas = [mobile_cas[i] for i in chain_mobile_indices]
+
+            quality_mask = filter_ca_pairs_by_quality(
+                aligned_fixed_cas, aligned_mobile_cas, min_plddt=min_plddt, max_bfactor=max_bfactor
+            )
+
+            # Apply mask
+            chain_fixed_indices = [chain_fixed_indices[i] for i in range(len(chain_fixed_indices)) if quality_mask[i]]
+            chain_mobile_indices = [
+                chain_mobile_indices[i] for i in range(len(chain_mobile_indices)) if quality_mask[i]
+            ]
+
+        # Collect coordinates
+        for fix_idx, mob_idx in zip(chain_fixed_indices, chain_mobile_indices, strict=True):
+            fixed_ca = fixed_cas[fix_idx]
+            mobile_ca = mobile_cas[mob_idx]
+            if fixed_ca is None or mobile_ca is None:
+                continue
+            fixed_coords_list.append([fixed_ca.pos.x, fixed_ca.pos.y, fixed_ca.pos.z])
+            mobile_coords_list.append([mobile_ca.pos.x, mobile_ca.pos.y, mobile_ca.pos.z])
+            chain_ids.append(chain_name)
 
     if len(fixed_coords_list) < 3:
         raise ValueError(f"Need at least 3 aligned CA pairs, found {len(fixed_coords_list)}")
@@ -154,6 +186,8 @@ def align_quaternary(
     refine: bool = False,
     cutoff_factor: float = 2.0,
     max_cycles: int = 5,
+    min_plddt: float | None = None,
+    max_bfactor: float | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[tuple[str, str]]]:
     """Quaternary structure alignment with smart chain matching.
 
@@ -170,6 +204,8 @@ def align_quaternary(
         refine: Enable iterative refinement for both seed and final alignment
         cutoff_factor: Outlier rejection cutoff for refinement
         max_cycles: Maximum refinement cycles
+        min_plddt: Minimum pLDDT threshold for quality filtering (optional)
+        max_bfactor: Maximum B-factor threshold for quality filtering (optional)
     Returns:
         Tuple of (fixed_coords, mobile_coords, chain_pairs):
         - fixed_coords: Nx3 array of CA coordinates from fixed structure
@@ -203,8 +239,8 @@ def align_quaternary(
     mobile_cas = extract_ca_atoms_by_residue(seed_mobile)
 
     # Extract seed coordinates
-    seed_fixed_coords = []
-    seed_mobile_coords = []
+    seed_fixed_indices = []
+    seed_mobile_indices = []
     for fix_idx, mob_idx in pairs:
         if fix_idx is not None and mob_idx is not None:
             if fix_idx < len(fixed_cas) and mob_idx < len(mobile_cas):
@@ -212,8 +248,32 @@ def align_quaternary(
                 mobile_ca = mobile_cas[mob_idx]
                 if fixed_ca is None or mobile_ca is None:
                     continue
-                seed_fixed_coords.append([fixed_ca.pos.x, fixed_ca.pos.y, fixed_ca.pos.z])
-                seed_mobile_coords.append([mobile_ca.pos.x, mobile_ca.pos.y, mobile_ca.pos.z])
+                seed_fixed_indices.append(fix_idx)
+                seed_mobile_indices.append(mob_idx)
+
+    # Apply quality filtering to seed alignment if requested
+    if min_plddt is not None or max_bfactor is not None:
+        aligned_fixed_cas = [fixed_cas[i] for i in seed_fixed_indices]
+        aligned_mobile_cas = [mobile_cas[i] for i in seed_mobile_indices]
+
+        quality_mask = filter_ca_pairs_by_quality(
+            aligned_fixed_cas, aligned_mobile_cas, min_plddt=min_plddt, max_bfactor=max_bfactor
+        )
+
+        # Apply mask
+        seed_fixed_indices = [seed_fixed_indices[i] for i in range(len(seed_fixed_indices)) if quality_mask[i]]
+        seed_mobile_indices = [seed_mobile_indices[i] for i in range(len(seed_mobile_indices)) if quality_mask[i]]
+
+    # Build coordinate arrays from filtered indices
+    seed_fixed_coords = []
+    seed_mobile_coords = []
+    for fix_idx, mob_idx in zip(seed_fixed_indices, seed_mobile_indices, strict=True):
+        fixed_ca = fixed_cas[fix_idx]
+        mobile_ca = mobile_cas[mob_idx]
+        if fixed_ca is None or mobile_ca is None:
+            continue
+        seed_fixed_coords.append([fixed_ca.pos.x, fixed_ca.pos.y, fixed_ca.pos.z])
+        seed_mobile_coords.append([mobile_ca.pos.x, mobile_ca.pos.y, mobile_ca.pos.z])
 
     if len(seed_fixed_coords) < 3:
         raise ValueError(f"Need at least 3 aligned CA pairs in seed chains, found {len(seed_fixed_coords)}")
@@ -308,7 +368,9 @@ def align_quaternary(
         fixed_cas = extract_ca_atoms_by_residue(fixed_chain)
         mobile_cas = extract_ca_atoms_by_residue(mobile_chain)
 
-        # Pool coordinates
+        # Build indices for this chain pair
+        chain_fixed_indices = []
+        chain_mobile_indices = []
         for fix_idx, mob_idx in pairs:
             if fix_idx is not None and mob_idx is not None:
                 if fix_idx < len(fixed_cas) and mob_idx < len(mobile_cas):
@@ -316,8 +378,32 @@ def align_quaternary(
                     mobile_ca = mobile_cas[mob_idx]
                     if fixed_ca is None or mobile_ca is None:
                         continue
-                    fixed_coords_list.append([fixed_ca.pos.x, fixed_ca.pos.y, fixed_ca.pos.z])
-                    mobile_coords_list.append([mobile_ca.pos.x, mobile_ca.pos.y, mobile_ca.pos.z])
+                    chain_fixed_indices.append(fix_idx)
+                    chain_mobile_indices.append(mob_idx)
+
+        # Apply quality filtering if requested
+        if min_plddt is not None or max_bfactor is not None:
+            aligned_fixed_cas = [fixed_cas[i] for i in chain_fixed_indices]
+            aligned_mobile_cas = [mobile_cas[i] for i in chain_mobile_indices]
+
+            quality_mask = filter_ca_pairs_by_quality(
+                aligned_fixed_cas, aligned_mobile_cas, min_plddt=min_plddt, max_bfactor=max_bfactor
+            )
+
+            # Apply mask
+            chain_fixed_indices = [chain_fixed_indices[i] for i in range(len(chain_fixed_indices)) if quality_mask[i]]
+            chain_mobile_indices = [
+                chain_mobile_indices[i] for i in range(len(chain_mobile_indices)) if quality_mask[i]
+            ]
+
+        # Pool coordinates
+        for fix_idx, mob_idx in zip(chain_fixed_indices, chain_mobile_indices, strict=True):
+            fixed_ca = fixed_cas[fix_idx]
+            mobile_ca = mobile_cas[mob_idx]
+            if fixed_ca is None or mobile_ca is None:
+                continue
+            fixed_coords_list.append([fixed_ca.pos.x, fixed_ca.pos.y, fixed_ca.pos.z])
+            mobile_coords_list.append([mobile_ca.pos.x, mobile_ca.pos.y, mobile_ca.pos.z])
 
     if len(fixed_coords_list) < 3:
         raise ValueError(f"Need at least 3 aligned CA pairs, found {len(fixed_coords_list)}")

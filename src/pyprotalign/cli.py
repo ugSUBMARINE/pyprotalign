@@ -13,7 +13,13 @@ from .alignment import align_multi_chain, align_quaternary, align_sequences
 from .io import load_structure, write_structure
 from .kabsch import calculate_rmsd, superpose
 from .refine import iterative_superpose
-from .selection import extract_ca_atoms_by_residue, extract_sequence, get_all_protein_chains, get_chain
+from .selection import (
+    extract_ca_atoms_by_residue,
+    extract_sequence,
+    filter_ca_pairs_by_quality,
+    get_all_protein_chains,
+    get_chain,
+)
 from .transform import apply_transformation, generate_conflict_free_chain_map, rename_chains
 
 logger = logging.getLogger(__name__)
@@ -52,6 +58,8 @@ def _align_structures(
             refine=args.refine,
             cutoff_factor=args.cutoff,
             max_cycles=args.cycles,
+            min_plddt=args.plddt,
+            max_bfactor=args.bfactor,
         )
 
         # Log chain pairing information
@@ -73,7 +81,9 @@ def _align_structures(
 
     elif args.global_mode:
         # Global multi-chain alignment
-        fixed_coords, mobile_coords, chain_ids = align_multi_chain(fixed_st, mobile_st)
+        fixed_coords, mobile_coords, chain_ids = align_multi_chain(
+            fixed_st, mobile_st, min_plddt=args.plddt, max_bfactor=args.bfactor
+        )
         # Count chains and pairs
         unique_chains = sorted(set(chain_ids))
         logger.info("Chains: %s", ", ".join(unique_chains))
@@ -114,6 +124,38 @@ def _align_structures(
             raise ValueError(f"Need at least 3 aligned CA pairs, found {len(fixed_indices)}")
 
         logger.info("Aligned: %d CA atom pairs", len(fixed_indices))
+
+        # Apply quality filtering if requested
+        if args.plddt is not None or args.bfactor is not None:
+            # Build aligned CA atom lists
+            aligned_fixed_cas = [fixed_cas[i] for i in fixed_indices]
+            aligned_mobile_cas = [mobile_cas[i] for i in mobile_indices]
+
+            # Filter by quality
+            quality_mask = filter_ca_pairs_by_quality(
+                aligned_fixed_cas, aligned_mobile_cas, min_plddt=args.plddt, max_bfactor=args.bfactor
+            )
+
+            # Apply mask to indices
+            filtered_fixed_indices = [fixed_indices[i] for i in range(len(fixed_indices)) if quality_mask[i]]
+            filtered_mobile_indices = [mobile_indices[i] for i in range(len(mobile_indices)) if quality_mask[i]]
+
+            n_filtered = len(fixed_indices) - len(filtered_fixed_indices)
+            filter_type = "pLDDT" if args.plddt is not None else "B-factor"
+            threshold = args.plddt if args.plddt is not None else args.bfactor
+            logger.info(
+                "Quality filter (%s %.1f): %d pairs filtered, %d retained",
+                filter_type,
+                threshold,
+                n_filtered,
+                len(filtered_fixed_indices),
+            )
+
+            fixed_indices = filtered_fixed_indices
+            mobile_indices = filtered_mobile_indices
+
+            if len(fixed_indices) < 3:
+                raise ValueError(f"Need at least 3 CA pairs after quality filtering, found {len(fixed_indices)}")
 
         # Extract coordinates
         fixed_coords_list = []
@@ -237,6 +279,18 @@ def main() -> None:
         "If not specified, uses first protein chain.",
     )
     parser.add_argument(
+        "--plddt",
+        type=float,
+        default=None,
+        help="Minimum pLDDT threshold - filter CA atoms with pLDDT < threshold (mutually exclusive with --bfactor)",
+    )
+    parser.add_argument(
+        "--bfactor",
+        type=float,
+        default=None,
+        help="Maximum B-factor threshold - filter CA atoms with B-factor > threshold (mutually exclusive with --plddt)",
+    )
+    parser.add_argument(
         "--refine",
         action="store_true",
         help="Use iterative refinement to reject outliers",
@@ -291,6 +345,8 @@ def main() -> None:
         parser.error("--global cannot be used with --fixed-chain or --mobile-chain")
     if args.rename_chains and not args.quaternary:
         parser.error("--rename-chains can only be used with --quaternary")
+    if args.plddt is not None and args.bfactor is not None:
+        parser.error("--plddt and --bfactor are mutually exclusive")
 
     # Determine mode: single or batch
     if len(args.mobile) == 1:

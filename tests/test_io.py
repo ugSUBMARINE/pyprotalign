@@ -66,7 +66,6 @@ ATOM 2 C CA . GLY A 1 2 ? 3.800 0.000 0.000 1.00 0.00 ? 2 GLY A CA 1
             load_structure("/nonexistent/path/file.pdb")
 
 
-
 class TestWriteStructure:
     """Tests for write_structure function."""
 

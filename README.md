@@ -7,6 +7,7 @@ Protein structure superposition using sequence alignment and iterative refinemen
 - **Sequence-based alignment**: Automatically identifies corresponding atoms via sequence alignment
 - **Kabsch algorithm**: Optimal least-squares superposition
 - **Iterative refinement**: Outlier rejection for improved accuracy
+- **Quality filtering**: Filter CA atoms by B-factor or pLDDT (for AlphaFold/Boltz models)
 - **Multi-chain support**:
   - Single-chain alignment with specified or default chains
   - Global alignment of all matching chains
@@ -51,6 +52,12 @@ uv run protalign fixed.cif mobile.cif --quaternary --rename-chains
 # With iterative refinement (reject outliers)
 uv run protalign fixed.cif mobile.cif --refine --cutoff 2.0 --cycles 5
 
+# Filter by pLDDT (for AlphaFold/Boltz models - use high-confidence regions)
+uv run protalign fixed.cif mobile.cif --plddt 70
+
+# Filter by B-factor (for crystal structures - use well-defined regions)
+uv run protalign fixed.cif mobile.cif --bfactor 30
+
 # Output as PDB
 uv run protalign fixed.cif mobile.cif -o superposed.pdb
 
@@ -73,8 +80,7 @@ Batch mode:
 ## Usage
 
 ```
-usage: protalign [-h] [--version] [-o OUTPUT] [--fixed-chain FIXED_CHAIN] [--mobile-chain MOBILE_CHAIN] [--refine] [--cycles CYCLES] [--cutoff CUTOFF] [--global] [--quaternary] [--distance-threshold DISTANCE_THRESHOLD] [--rename-chains] [--verbose]
-                 fixed mobile [mobile ...]
+usage: protalign [-h] [--version] [-o OUTPUT] [--fixed-chain FIXED_CHAIN] [--mobile-chain MOBILE_CHAIN] [--plddt PLDDT] [--bfactor BFACTOR] [--refine] [--cycles CYCLES] [--cutoff CUTOFF] [--global] [--quaternary] [--distance-threshold DISTANCE_THRESHOLD] [--rename-chains] [--verbose] fixed mobile [mobile ...]
 
 Protein structure superposition tool
 
@@ -90,6 +96,8 @@ options:
                         Chain ID for fixed structure (e.g., A). Also used as 'seed' chain in quaternary mode. If not specified, uses first protein chain.
   --mobile-chain MOBILE_CHAIN
                         Chain ID for mobile structure (e.g., A). Also used as 'seed' chain in quaternary mode. If not specified, uses first protein chain.
+  --plddt PLDDT         Minimum pLDDT threshold - filter CA atoms with pLDDT < threshold (mutually exclusive with --bfactor)
+  --bfactor BFACTOR     Maximum B-factor threshold - filter CA atoms with B-factor > threshold (mutually exclusive with --plddt)
   --refine              Use iterative refinement to reject outliers
   --cycles CYCLES       Maximum refinement cycles (default: 5)
   --cutoff CUTOFF       Outlier rejection cutoff (distance > cutoff * RMSD) (default: 2.0)
@@ -107,6 +115,7 @@ The tool reports:
 - Chain(s) and number of residues (single-chain mode)
 - Chains aligned and total pairs (global mode)
 - Number of aligned CA atom pairs
+- Quality filtering stats (if using `--plddt` or `--bfactor`)
 - Final RMSD in Ångströms
 - If using `--refine`: number of pairs retained/rejected
 
@@ -251,30 +260,33 @@ Successful alignments:
 2. **Extract chains**: Selects specified chain or first protein chain
 3. **Sequence alignment**: Aligns sequences using gemmi's implementation
 4. **Extract CA atoms**: Gets Cα coordinates from aligned residues
-5. **Superposition**: Applies Kabsch algorithm for optimal transformation
-6. **Refinement** (optional): Iteratively rejects outliers beyond `cutoff × RMSD`
-7. **Transform**: Applies transformation to entire mobile structure
-8. **Output**: Writes superposed structure in requested format
+5. **Quality filtering** (optional): Filters CA atom pairs by pLDDT or B-factor
+6. **Superposition**: Applies Kabsch algorithm for optimal transformation
+7. **Refinement** (optional): Iteratively rejects outliers beyond `cutoff × RMSD`
+8. **Transform**: Applies transformation to entire mobile structure
+9. **Output**: Writes superposed structure in requested format
 
 ### Global mode (`--global`)
 1. **Load structures**: Reads PDB or mmCIF files
 2. **Match chains**: Identifies common chain IDs (A-A, B-B, etc.)
 3. **Align per chain**: Sequence alignment for each chain pair
-4. **Pool coordinates**: Combines CA atoms from all matched chains
-5. **Single transformation**: Computes one transformation for all pooled coordinates
-6. **Refinement** (optional): Iteratively rejects outliers across all chains
-7. **Transform**: Applies transformation to entire mobile structure
-8. **Output**: Writes superposed structure in requested format
+4. **Quality filtering** (optional): Filters CA atom pairs per chain by pLDDT or B-factor
+5. **Pool coordinates**: Combines CA atoms from all matched chains
+6. **Single transformation**: Computes one transformation for all pooled coordinates
+7. **Refinement** (optional): Iteratively rejects outliers across all chains
+8. **Transform**: Applies transformation to entire mobile structure
+9. **Output**: Writes superposed structure in requested format
 
 ### Quaternary mode (`--quaternary`)
 1. **Load structures**: Reads PDB or mmCIF files
-2. **Seed alignment**: Aligns specified or first chain pair with optional refinement
+2. **Seed alignment**: Aligns specified or first chain pair with optional quality filtering and refinement
 3. **Proximity matching**: Transforms mobile copy, matches remaining chains by distance between chain centers
 4. **Pool coordinates**: Sequence aligns all matched chain pairs, pools CA atoms
-5. **Final transformation**: Computes transformation on pooled coords with optional refinement
-6. **Transform**: Applies transformation to mobile structure
-7. **Rename** (optional with `--rename-chains`): Renames mobile chains to match fixed
-8. **Output**: Writes superposed structure
+5. **Quality filtering** (optional): Filters CA atom pairs per chain by pLDDT or B-factor
+6. **Final transformation**: Computes transformation on pooled coords with optional refinement
+7. **Transform**: Applies transformation to mobile structure
+8. **Rename** (optional with `--rename-chains`): Renames mobile chains to match fixed
+9. **Output**: Writes superposed structure
 
 ## Development
 

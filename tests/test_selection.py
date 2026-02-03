@@ -234,3 +234,256 @@ class TestComputeChainCenter:
 
         with pytest.raises(ValueError, match="Chain 'A' has no CA atoms"):
             compute_chain_center(chain)
+
+
+class TestFilterCaAtomsByQuality:
+    """Tests for filter_ca_atoms_by_quality function."""
+
+    def test_plddt_filtering_keeps_high_values(self) -> None:
+        """Test that pLDDT filter keeps atoms with high pLDDT."""
+        # Create atoms with different pLDDT values (stored in b_iso)
+        atoms: list[gemmi.Atom | None] = []
+        for plddt in [90.0, 70.0, 50.0, 30.0]:
+            atom = gemmi.Atom()
+            atom.b_iso = plddt
+            atoms.append(atom)
+
+        from pyprotalign.selection import filter_ca_atoms_by_quality
+
+        mask = filter_ca_atoms_by_quality(atoms, min_plddt=60.0)
+
+        # Should keep atoms with pLDDT >= 60.0
+        assert mask[0]  # 90.0
+        assert mask[1]  # 70.0
+        assert not mask[2]  # 50.0
+        assert not mask[3]  # 30.0
+
+    def test_bfactor_filtering_keeps_low_values(self) -> None:
+        """Test that B-factor filter keeps atoms with low B-factor."""
+        atoms: list[gemmi.Atom | None] = []
+        for bfactor in [10.0, 30.0, 50.0, 70.0]:
+            atom = gemmi.Atom()
+            atom.b_iso = bfactor
+            atoms.append(atom)
+
+        from pyprotalign.selection import filter_ca_atoms_by_quality
+
+        mask = filter_ca_atoms_by_quality(atoms, max_bfactor=40.0)
+
+        # Should keep atoms with B-factor <= 40.0
+        assert mask[0]  # 10.0
+        assert mask[1]  # 30.0
+        assert not mask[2]  # 50.0
+        assert not mask[3]  # 70.0
+
+    def test_mutual_exclusivity_error(self) -> None:
+        """Test error when both filters specified."""
+        atoms = [gemmi.Atom()]
+
+        from pyprotalign.selection import filter_ca_atoms_by_quality
+
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            filter_ca_atoms_by_quality(atoms, min_plddt=50.0, max_bfactor=30.0)
+
+    def test_neither_specified_error(self) -> None:
+        """Test error when neither filter specified."""
+        atoms = [gemmi.Atom()]
+
+        from pyprotalign.selection import filter_ca_atoms_by_quality
+
+        with pytest.raises(ValueError, match="Either min_plddt or max_bfactor must be specified"):
+            filter_ca_atoms_by_quality(atoms)
+
+    def test_none_atoms_filtered_out(self) -> None:
+        """Test that None atoms are always filtered out."""
+        atoms: list[gemmi.Atom | None] = []
+        atom1 = gemmi.Atom()
+        atom1.b_iso = 90.0
+        atoms.append(atom1)
+        atoms.append(None)
+        atom3 = gemmi.Atom()
+        atom3.b_iso = 80.0
+        atoms.append(atom3)
+
+        from pyprotalign.selection import filter_ca_atoms_by_quality
+
+        mask = filter_ca_atoms_by_quality(atoms, min_plddt=60.0)
+
+        assert mask[0]
+        assert not mask[1]  # None filtered out
+        assert mask[2]
+
+    def test_all_none_atoms(self) -> None:
+        """Test filtering with all None atoms."""
+        atoms: list[gemmi.Atom | None] = [None, None, None]
+
+        from pyprotalign.selection import filter_ca_atoms_by_quality
+
+        mask = filter_ca_atoms_by_quality(atoms, min_plddt=50.0)
+
+        assert not any(mask)
+
+    def test_edge_values_plddt(self) -> None:
+        """Test edge values for pLDDT filtering."""
+        atoms: list[gemmi.Atom | None] = []
+        for plddt in [0.0, 50.0, 100.0]:
+            atom = gemmi.Atom()
+            atom.b_iso = plddt
+            atoms.append(atom)
+
+        from pyprotalign.selection import filter_ca_atoms_by_quality
+
+        # Test threshold at 50.0
+        mask = filter_ca_atoms_by_quality(atoms, min_plddt=50.0)
+        assert not mask[0]  # 0.0 < 50.0
+        assert mask[1]  # 50.0 >= 50.0 (equality edge case)
+        assert mask[2]  # 100.0 >= 50.0
+
+    def test_edge_values_bfactor(self) -> None:
+        """Test edge values for B-factor filtering."""
+        atoms: list[gemmi.Atom | None] = []
+        for bfactor in [0.0, 50.0, 100.0]:
+            atom = gemmi.Atom()
+            atom.b_iso = bfactor
+            atoms.append(atom)
+
+        from pyprotalign.selection import filter_ca_atoms_by_quality
+
+        # Test threshold at 50.0
+        mask = filter_ca_atoms_by_quality(atoms, max_bfactor=50.0)
+        assert mask[0]  # 0.0 <= 50.0
+        assert mask[1]  # 50.0 <= 50.0 (equality edge case)
+        assert not mask[2]  # 100.0 > 50.0
+
+
+class TestFilterCaPairsByQuality:
+    """Tests for filter_ca_pairs_by_quality function."""
+
+    def test_both_atoms_must_pass(self) -> None:
+        """Test that both atoms in pair must pass filter."""
+        # Fixed: all high pLDDT
+        fixed_atoms: list[gemmi.Atom | None] = []
+        for plddt in [90.0, 80.0, 70.0]:
+            atom = gemmi.Atom()
+            atom.b_iso = plddt
+            fixed_atoms.append(atom)
+
+        # Mobile: mixed quality
+        mobile_atoms: list[gemmi.Atom | None] = []
+        for plddt in [85.0, 40.0, 75.0]:  # Second one fails threshold
+            atom = gemmi.Atom()
+            atom.b_iso = plddt
+            mobile_atoms.append(atom)
+
+        from pyprotalign.selection import filter_ca_pairs_by_quality
+
+        mask = filter_ca_pairs_by_quality(fixed_atoms, mobile_atoms, min_plddt=60.0)
+
+        # First pair: both pass (90, 85)
+        assert mask[0]
+        # Second pair: mobile fails (80, 40)
+        assert not mask[1]
+        # Third pair: both pass (70, 75)
+        assert mask[2]
+
+    def test_one_atom_fails_pair_rejected(self) -> None:
+        """Test that if one atom fails, entire pair is rejected."""
+        fixed_atoms: list[gemmi.Atom | None] = []
+        atom1 = gemmi.Atom()
+        atom1.b_iso = 40.0  # Fails
+        fixed_atoms.append(atom1)
+
+        mobile_atoms: list[gemmi.Atom | None] = []
+        atom2 = gemmi.Atom()
+        atom2.b_iso = 80.0  # Passes
+        mobile_atoms.append(atom2)
+
+        from pyprotalign.selection import filter_ca_pairs_by_quality
+
+        mask = filter_ca_pairs_by_quality(fixed_atoms, mobile_atoms, min_plddt=60.0)
+
+        # Fixed fails, mobile passes → pair rejected
+        assert not mask[0]
+
+    def test_index_relationship_preserved(self) -> None:
+        """Test that index relationship is preserved."""
+        fixed_atoms: list[gemmi.Atom | None] = []
+        mobile_atoms: list[gemmi.Atom | None] = []
+
+        # Create 5 pairs with various quality combinations
+        fixed_plddt = [90.0, 50.0, 80.0, 30.0, 70.0]
+        mobile_plddt = [85.0, 75.0, 40.0, 65.0, 68.0]
+
+        for plddt in fixed_plddt:
+            atom = gemmi.Atom()
+            atom.b_iso = plddt
+            fixed_atoms.append(atom)
+
+        for plddt in mobile_plddt:
+            atom = gemmi.Atom()
+            atom.b_iso = plddt
+            mobile_atoms.append(atom)
+
+        from pyprotalign.selection import filter_ca_pairs_by_quality
+
+        mask = filter_ca_pairs_by_quality(fixed_atoms, mobile_atoms, min_plddt=60.0)
+
+        # Pair 0: (90, 85) → both pass
+        assert mask[0]
+        # Pair 1: (50, 75) → fixed fails
+        assert not mask[1]
+        # Pair 2: (80, 40) → mobile fails
+        assert not mask[2]
+        # Pair 3: (30, 65) → fixed fails
+        assert not mask[3]
+        # Pair 4: (70, 68) → both pass
+        assert mask[4]
+
+        # Mask length equals input length
+        assert len(mask) == len(fixed_atoms) == len(mobile_atoms)
+
+    def test_length_mismatch_error(self) -> None:
+        """Test error when lists have different lengths."""
+        fixed_atoms = [gemmi.Atom(), gemmi.Atom()]
+        mobile_atoms = [gemmi.Atom()]
+
+        from pyprotalign.selection import filter_ca_pairs_by_quality
+
+        with pytest.raises(ValueError, match="must have same length"):
+            filter_ca_pairs_by_quality(fixed_atoms, mobile_atoms, min_plddt=50.0)
+
+    def test_none_atoms_in_pairs(self) -> None:
+        """Test handling of None atoms in pairs."""
+        fixed_atoms: list[gemmi.Atom | None] = []
+        mobile_atoms: list[gemmi.Atom | None] = []
+
+        # Pair 0: both valid, high quality
+        atom1 = gemmi.Atom()
+        atom1.b_iso = 90.0
+        fixed_atoms.append(atom1)
+        atom2 = gemmi.Atom()
+        atom2.b_iso = 85.0
+        mobile_atoms.append(atom2)
+
+        # Pair 1: fixed is None
+        fixed_atoms.append(None)
+        atom3 = gemmi.Atom()
+        atom3.b_iso = 80.0
+        mobile_atoms.append(atom3)
+
+        # Pair 2: mobile is None
+        atom4 = gemmi.Atom()
+        atom4.b_iso = 75.0
+        fixed_atoms.append(atom4)
+        mobile_atoms.append(None)
+
+        from pyprotalign.selection import filter_ca_pairs_by_quality
+
+        mask = filter_ca_pairs_by_quality(fixed_atoms, mobile_atoms, min_plddt=60.0)
+
+        # Pair 0: both valid and pass
+        assert mask[0]
+        # Pair 1: fixed is None → fails
+        assert not mask[1]
+        # Pair 2: mobile is None → fails
+        assert not mask[2]
