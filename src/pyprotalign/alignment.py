@@ -2,11 +2,13 @@
 
 import copy
 import logging
+from textwrap import wrap
 
 import gemmi
 import numpy as np
 
-from .kabsch import superpose
+from .chain import ProteinChain
+from .kabsch import calculate_rmsd, superpose
 from .refine import iterative_superpose
 from .selection import (
     compute_chain_center,
@@ -21,12 +23,111 @@ from .transform import apply_transformation
 logger = logging.getLogger(__name__)
 
 
-def align_sequences(seq1: str, seq2: str) -> list[tuple[int | None, int | None]]:
+def align_two_chains(
+    fixed_chain: ProteinChain,
+    mobile_chain: ProteinChain,
+    refine: bool = False,
+    cutoff_factor: float = 2.0,
+    max_cycles: int = 5,
+    min_plddt: float | None = None,
+    max_bfactor: float | None = None,
+) -> tuple[np.ndarray, np.ndarray, float, int]:
+    """Align two protein chains based on a sequence alignment.
+       Allows filtering by B-factor /pLDDT. Optionally refines alignment.
+
+    Args:
+        fixed_chain: Fixed ProteinChain
+        mobile_chain: Mobile ProteinChain
+        refine: Enable iterative refinement (optional)
+        cutoff_factor: Outlier rejection cutoff for refinement
+        max_cycles: Maximum refinement cycles
+        min_plddt: Minimum pLDDT threshold for quality filtering (optional)
+        max_bfactor: Maximum B-factor threshold for quality filtering (optional)
+
+    Returns:
+        Tuple of (rotation, translation, rmsd, n_aligned):
+        - rotation: 3x3 rotation matrix
+        - translation: 3-element translation vector
+        - rmsd: RMSD of aligned CA atoms
+        - n_aligned: Number of aligned CA atom pairs
+
+    Raises:
+        ValueError: If fewer than 3 aligned CA pairs
+        ValueError: If both min_plddt and max_bfactor are specified
+    """
+    # Align sequences
+    pairs = align_sequences(fixed_chain.sequence, mobile_chain.sequence)
+
+    # Extract aligned residue indices (where both have CA atoms)
+    fixed_indices = []
+    mobile_indices = []
+
+    for fix_idx, mob_idx in pairs:
+        # Skip gaps
+        if fix_idx is None or mob_idx is None:
+            continue
+        # Check both residues have CA atoms (not NaN)
+        if np.isnan(fixed_chain.coords[fix_idx, 0]) or np.isnan(mobile_chain.coords[mob_idx, 0]):
+            continue
+
+        fixed_indices.append(fix_idx)
+        mobile_indices.append(mob_idx)
+
+    if len(fixed_indices) < 3:
+        raise ValueError(f"Need at least 3 aligned CA pairs, found {len(fixed_indices)}")
+
+    # get coordinates at the aligned indices
+    fixed_coord = fixed_chain.coords[fixed_indices]
+    mobile_coord = mobile_chain.coords[mobile_indices]
+
+    # Apply quality filtering if requested
+    if min_plddt is not None and max_bfactor is not None:
+        raise ValueError("Specify only one of min_plddt or max_bfactor for quality filtering")
+
+    if min_plddt is not None or max_bfactor is not None:
+        # Get B-factors at the aligned indices
+        fixed_bfactors = fixed_chain.b_factors[fixed_indices]
+        mobile_bfactors = mobile_chain.b_factors[mobile_indices]
+
+        if min_plddt is not None:
+            fixed_quality_mask = fixed_bfactors >= min_plddt
+            mobile_quality_mask = mobile_bfactors >= min_plddt
+        elif max_bfactor is not None:
+            fixed_quality_mask = fixed_bfactors <= max_bfactor
+            mobile_quality_mask = mobile_bfactors <= max_bfactor
+
+        quality_mask = fixed_quality_mask & mobile_quality_mask
+    else:
+        quality_mask = np.ones(len(fixed_indices), dtype=bool)
+
+    # Apply quality mask
+    fixed_coords = fixed_coord[quality_mask]
+    mobile_coords = mobile_coord[quality_mask]
+
+    if len(fixed_coords) < 3:
+        raise ValueError(f"Need at least 3 CA pairs after quality filtering, found {len(fixed_indices)}")
+
+    # Compute transformation
+    if refine:
+        rotation, translation, mask, rmsd = iterative_superpose(
+            fixed_coords, mobile_coords, max_cycles=max_cycles, cutoff_factor=cutoff_factor
+        )
+        n_aligned = int(np.sum(mask))
+    else:
+        rotation, translation = superpose(fixed_coords, mobile_coords)
+        mobile_transformed = mobile_coords @ rotation.T + translation
+        rmsd = calculate_rmsd(fixed_coords, mobile_transformed)
+        n_aligned = len(fixed_coords)
+
+    return rotation, translation, rmsd, n_aligned
+
+
+def align_sequences(seq_1: str, seq_2: str) -> list[tuple[int | None, int | None]]:
     """Align two sequences and return paired indices.
 
     Args:
-        seq1: First sequence (fixed)
-        seq2: Second sequence (mobile)
+        seq_1: First sequence (fixed)
+        seq_2: Second sequence (mobile)
 
     Returns:
         List of paired indices. Each tuple contains (seq1_idx, seq2_idx).
@@ -34,38 +135,53 @@ def align_sequences(seq1: str, seq2: str) -> list[tuple[int | None, int | None]]
 
     Example:
         For alignment:
-            seq1: AC-DEFG
-            seq2: ACDXFG-
+            seq_1: AC-DEFG
+            seq_2: ACYEDF-
         Returns: [(0,0), (1,1), (None,2), (2,3), (3,4), (4,5), (5,None)]
     """
-    result = gemmi.align_string_sequences(list(seq1), list(seq2), [0] * len(seq2))
+    result = gemmi.align_string_sequences(
+        gemmi.expand_one_letter_sequence(seq_1, gemmi.ResidueKind.AA),
+        gemmi.expand_one_letter_sequence(seq_2, gemmi.ResidueKind.AA),
+        [],
+        gemmi.AlignmentScoring("b"),
+    )
 
     # Get aligned sequences from formatted output
     # Format is: seq1_aligned\nmatch_string\nseq2_aligned\n
-    formatted = result.formatted(seq1, seq2)
-    lines = formatted.strip().split("\n")
-    aligned1 = lines[0]
-    aligned2 = lines[2]
+    formatted = result.formatted(seq_1, seq_2)
+    aligned_1, matches, aligned_2, _ = formatted.split("\n")
+
+    # log alignment for debugging
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("\nSequence alignment:\n")
+        for line_1, match_line, line_2 in zip(
+            wrap(aligned_1, width=60), wrap(matches, width=60), wrap(aligned_2, width=60), strict=True
+        ):
+            logger.debug(" Fixed: %s", line_1)
+            logger.debug("        %s", match_line)
+            logger.debug("Mobile: %s\n", line_2)
+        logger.debug("Score: %d", result.score)
+        logger.debug("Indentity: %.1f%%\n", result.calculate_identity())
 
     pairs: list[tuple[int | None, int | None]] = []
-    idx1 = 0
-    idx2 = 0
+    idx_1 = 0
+    idx_2 = 0
 
     # Parse aligned sequences to build correspondence
-    for i in range(len(aligned1)):
-        if aligned1[i] == "-":
+    for aa_1, aa_2 in zip(aligned_1, aligned_2, strict=True):
+        if aa_1 == "-":
             # Gap in seq1
-            pairs.append((None, idx2))
-            idx2 += 1
-        elif aligned2[i] == "-":
+            pairs.append((None, idx_2))
+            idx_2 += 1
+        elif aa_2 == "-":
             # Gap in seq2
-            pairs.append((idx1, None))
-            idx1 += 1
+            pairs.append((idx_1, None))
+            idx_1 += 1
         else:
             # Match or mismatch
-            pairs.append((idx1, idx2))
-            idx1 += 1
-            idx2 += 1
+            pairs.append((idx_1, idx_2))
+            idx_1 += 1
+            idx_2 += 1
 
     return pairs
 

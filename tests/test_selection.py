@@ -206,6 +206,7 @@ class TestComputeChainCenter:
             res.entity_type = gemmi.EntityType.Polymer
             atom = gemmi.Atom()
             atom.name = "CA"
+            atom.element = gemmi.Element("C")
             atom.pos = gemmi.Position(x, y, z)
             res.add_atom(atom)
             chain.add_residue(res)

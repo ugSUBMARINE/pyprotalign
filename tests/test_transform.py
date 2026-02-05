@@ -21,6 +21,7 @@ class TestApplyTransformation:
         res.name = "ALA"
         atom = gemmi.Atom()
         atom.name = "CA"
+        atom.element = gemmi.Element("C")
         atom.pos = gemmi.Position(1.0, 2.0, 3.0)
         res.add_atom(atom)
         chain.add_residue(res)
@@ -50,6 +51,7 @@ class TestApplyTransformation:
         res.name = "ALA"
         atom = gemmi.Atom()
         atom.name = "CA"
+        atom.element = gemmi.Element("C")
         atom.pos = gemmi.Position(1.0, 2.0, 3.0)
         res.add_atom(atom)
         chain.add_residue(res)
@@ -77,6 +79,7 @@ class TestApplyTransformation:
         res.name = "ALA"
         atom = gemmi.Atom()
         atom.name = "CA"
+        atom.element = gemmi.Element("C")
         atom.pos = gemmi.Position(1.0, 0.0, 0.0)
         res.add_atom(atom)
         chain.add_residue(res)
@@ -137,6 +140,7 @@ class TestApplyTransformation:
             res.name = "ALA"
             atom = gemmi.Atom()
             atom.name = "CA"
+            atom.element = gemmi.Element("C")
             atom.pos = gemmi.Position(1.0, 0.0, 0.0)
             res.add_atom(atom)
             chain.add_residue(res)

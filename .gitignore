@@ -12,3 +12,6 @@ wheels/
 # pytest coverage files
 htmlcov/
 .coverage
+
+# MacOS specific files
+.DS_Store

@@ -100,7 +100,7 @@ def extract_ca_atoms(chain: gemmi.Chain) -> list[gemmi.Atom]:
     ca_atoms = []
     polymer = chain.get_polymer()
     for residue in polymer:
-        ca = residue.find_atom("CA", "*")
+        ca = residue.get_ca()
         if ca:
             ca_atoms.append(ca)
     return ca_atoms
@@ -118,7 +118,7 @@ def extract_ca_atoms_by_residue(chain: gemmi.Chain) -> list[gemmi.Atom | None]:
     polymer = chain.get_polymer()
     ca_atoms: list[gemmi.Atom | None] = []
     for residue in polymer:
-        ca = residue.find_atom("CA", "*")
+        ca = residue.get_ca()
         ca_atoms.append(ca if ca else None)
     return ca_atoms
 

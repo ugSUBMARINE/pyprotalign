@@ -108,6 +108,7 @@ class TestAlignMultiChain:
                 # Add CA atom
                 atom = gemmi.Atom()
                 atom.name = "CA"
+                atom.element = gemmi.Element("C")
                 atom.pos = gemmi.Position(float(i), 0.0, 0.0)
                 res.add_atom(atom)
             chain.add_residue(res)
@@ -241,6 +242,7 @@ class TestAlignQuaternary:
             if i not in missing:
                 atom = gemmi.Atom()
                 atom.name = "CA"
+                atom.element = gemmi.Element("C")
                 atom.pos = gemmi.Position(float(i) + offset[0], offset[1], offset[2])
                 res.add_atom(atom)
             chain.add_residue(res)

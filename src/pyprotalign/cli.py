@@ -2,7 +2,6 @@
 
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 import gemmi
@@ -238,7 +237,56 @@ def _align_structures(
     return mobile_st, rmsd, info_str
 
 
-def main() -> None:
+def _gemmi_align_structures(
+    fixed_st: gemmi.Structure,
+    mobile_st: gemmi.Structure,
+    args: argparse.Namespace,
+) -> tuple[gemmi.Structure, float, str]:
+    """Perform simple one-chain-to-one-chain alignment using gemmi's built-in function.
+
+    Args:
+        fixed_st: Fixed structure
+        mobile_st: Mobile structure - will be modified in place
+        args: Parsed command-line arguments
+
+    Returns:
+        Tuple of (transformed mobile structure, RMSD, info string for reporting)
+
+    Note:
+        Internal sequence alignment yields much smaller numbers of CA pairs ('sup.count')
+        than the alignment method used in the custom functions. Reasons are unclear.
+    """
+    # get chains, default to first chain if not specified
+    fixed_chain = fixed_st[0][0] if not args.fixed_chain else fixed_st[0][args.fixed_chain]
+    mobile_chain = mobile_st[0][0] if not args.mobile_chain else mobile_st[0][args.mobile_chain]
+
+    fixed_pol = fixed_chain.get_polymer()
+    mobile_pol = mobile_chain.get_polymer()
+    ptype = fixed_pol.check_polymer_type()
+
+    logger.info("Using gemmi built-in superposition")
+    logger.info("Fixed:  chain %s, %d residues", fixed_chain.name, len(fixed_pol))
+    logger.info("Mobile: chain %s, %d residues", mobile_chain.name, len(mobile_pol))
+
+    sup = gemmi.calculate_superposition(
+        fixed_pol,
+        mobile_pol,
+        ptype,
+        sel=gemmi.SupSelect.CaP,
+        trim_cycles=args.cycles if args.refine else 0,
+        trim_cutoff=args.cutoff,
+    )
+
+    logger.info("Aligned: %d CA atom pairs", sup.count)
+    logger.info("RMSD: %.3f Å", sup.rmsd)
+
+    for model in mobile_st:
+        model.transform_pos_and_adp(sup.transform)
+
+    return mobile_st, sup.rmsd, "using gemmi superposition"
+
+
+def main() -> int:
     """Entry point for the protalign CLI."""
     parser = argparse.ArgumentParser(
         prog="protalign",
@@ -348,6 +396,20 @@ def main() -> None:
     if args.plddt is not None and args.bfactor is not None:
         parser.error("--plddt and --bfactor are mutually exclusive")
 
+    # Default alignment mode: one mobile chain to one fixed chain, no filtering
+    # In this cace, use the alignment function provided by 'gemmi'
+    default_align_mode = all(
+        [
+            args.plddt is None,
+            args.bfactor is None,
+            not args.global_mode,
+            not args.quaternary,
+            # always use custom alignment for now
+            # there are issues with gemmi alignment
+            False,
+        ]
+    )
+
     # Determine mode: single or batch
     if len(args.mobile) == 1:
         # Single mode
@@ -356,15 +418,20 @@ def main() -> None:
             mobile_st = load_structure(args.mobile[0])
 
             # Perform alignment
-            mobile_st, rmsd, info_str = _align_structures(fixed_st, mobile_st, args)
+            if default_align_mode:
+                mobile_st, rmsd, info_str = _gemmi_align_structures(fixed_st, mobile_st, args)
+            else:
+                mobile_st, rmsd, info_str = _align_structures(fixed_st, mobile_st, args)
 
             # Write output
             write_structure(mobile_st, args.output)
             logger.info("Superposed structure written to: %s", args.output)
 
+            return 0
+
         except Exception as e:
             logger.error("Error: %s", e)
-            sys.exit(1)
+            return 1
     else:
         # Batch mode
         try:
@@ -372,7 +439,7 @@ def main() -> None:
             fixed_st = load_structure(args.fixed)
         except Exception as e:
             logger.error("Error loading fixed structure: %s", e)
-            sys.exit(1)
+            return 1
 
         # Parse suffix from --output (strip extension if present)
         output_path = Path(args.output)
@@ -456,7 +523,7 @@ def main() -> None:
                 if r["status"] == "FAILED":
                     logger.info("  %-40s Error: %s", r["file"], r["info"])
 
-        sys.exit(0 if failed == 0 else 1)
+        return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":

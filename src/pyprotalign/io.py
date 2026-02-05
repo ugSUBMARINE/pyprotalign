@@ -1,8 +1,11 @@
 """Structure file I/O operations."""
 
+from logging import getLogger
 from pathlib import Path
 
 import gemmi
+
+logger = getLogger(__name__)
 
 
 def load_structure(path: str) -> gemmi.Structure:
@@ -26,6 +29,14 @@ def load_structure(path: str) -> gemmi.Structure:
 
     if len(structure) == 0:
         raise ValueError(f"Structure has no models: {path}")
+
+    if len(structure) > 1:
+        logger.warning(
+            "Structure '%s' has %d models. Only first model used for alignment, "
+            "but transformations will be applied to all models.",
+            structure.name,
+            len(structure),
+        )
 
     # Setup entities to identify polymer chains
     structure.setup_entities()
