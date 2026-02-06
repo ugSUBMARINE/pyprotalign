@@ -1,5 +1,7 @@
 """Utility functions for working with Gemmi library in pyprotalign package."""
 
+from __future__ import annotations
+
 import logging
 from pathlib import Path
 from textwrap import wrap

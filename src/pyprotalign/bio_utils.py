@@ -1,5 +1,7 @@
 """Utility functions for working with Biopython library in pyprotalign package."""
 
+from __future__ import annotations
+
 try:
     from Bio.PDB.Polypeptide import PPBuilder, is_aa  # type: ignore[import-not-found]
     from Bio.SeqUtils import seq1  # type: ignore[import-not-found]

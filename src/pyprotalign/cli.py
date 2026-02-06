@@ -1,5 +1,7 @@
 """Command-line interface for pyprotalign."""
 
+from __future__ import annotations
+
 import argparse
 import logging
 from pathlib import Path
@@ -182,7 +184,7 @@ def _align_two_chains(
     )
 
     if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("\n -- Summary --\n")
+        logger.debug("\n-- Summary --\n")
 
     return rotation, translation, rmsd, num_aligned
 
@@ -207,7 +209,7 @@ def _align_gloablly(
     )
 
     if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("\n -- Summary --\n")
+        logger.debug("\n-- Summary --\n")
 
     if args.by_order:
         matches = ", ".join([f"{chn_id_1} → {chn_id_2}" for chn_id_1, chn_id_2 in chain_mapping.items()])
@@ -242,7 +244,7 @@ def _align_quaternary(
         min_occ=args.min_occ,
     )
     if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("\n -- Summary --\n")
+        logger.debug("\n-- Summary --\n")
 
     matches = ", ".join([f"{chn_id_1} → {chn_id_2}" for chn_id_1, chn_id_2 in chain_mapping.items()])
     logger.info(
@@ -340,11 +342,14 @@ def main() -> int:
 
             # Rename the chains in mobile structure after quaternary alignment
             if args.rename_chains:
-                logger.info("Renaming chains...")
                 chain_rename_map = generate_conflict_free_chain_map(mobile_st, chain_mapping)
-
+                logger.info(
+                    "Renaming chains in mobile structure: %s",
+                    ", ".join([f"{chn_id_1} → {chn_id_2}" for chn_id_1, chn_id_2 in chain_rename_map.items()]),
+                )
                 if logger.isEnabledFor(logging.DEBUG):
                     # Get all mobile chain names for complete reporting
+                    logger.debug("Complete mapping:")
                     all_mobile_chains = sorted({chain.name for chain in mobile_st[0]})
                     aligned_renames = {mobile_name: fixed_name for fixed_name, mobile_name in chain_mapping.items()}
                     for chain_name in all_mobile_chains:
@@ -360,6 +365,7 @@ def main() -> int:
                         else:
                             # Unaligned chain that keeps its name
                             logger.debug("  %s → %s (unaligned)", chain_name, chain_name)
+                    logger.debug("")
 
                 rename_chains(mobile_st, chain_rename_map)
 
