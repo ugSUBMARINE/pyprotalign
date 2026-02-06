@@ -47,7 +47,7 @@ def iterative_superpose(
 
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
     if debug_enabled:
-        logger.debug("  Refinement cycles:")
+        logger.debug("\n  Refinement cycles:")
 
     for cycle in range(max_cycles):
         # Superpose current subset

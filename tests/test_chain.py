@@ -169,79 +169,11 @@ class TestFromBiopython:
             ProteinChain.from_biopython(MockChain())
 
 
-class TestGetAlignedIndices:
-    """Tests for get_aligned_indices method."""
-
-    def test_get_aligned_indices_all_present(self) -> None:
-        """Test getting indices when all CA atoms present."""
-        chain = ProteinChain(
-            chain_id="A",
-            sequence="ACDEF",
-            coords=np.random.rand(5, 3),
-            b_factors=np.random.rand(5),
-            occupancies=np.ones(5),
-        )
-        indices = chain.get_aligned_indices()
-        np.testing.assert_array_equal(indices, [0, 1, 2, 3, 4])
-
-    def test_get_aligned_indices_some_missing(self) -> None:
-        """Test getting indices with missing CA atoms."""
-        coords = np.array(
-            [
-                [1.0, 2.0, 3.0],
-                [np.nan, np.nan, np.nan],
-                [4.0, 5.0, 6.0],
-                [np.nan, np.nan, np.nan],
-                [7.0, 8.0, 9.0],
-            ]
-        )
-        chain = ProteinChain(
-            chain_id="A",
-            sequence="ACDEF",
-            coords=coords,
-            b_factors=np.random.rand(5),
-            occupancies=np.ones(5),
-        )
-        indices = chain.get_aligned_indices()
-        np.testing.assert_array_equal(indices, [0, 2, 4])
-
-
-class TestGetCaAtoms:
-    """Tests for get_ca_atoms method."""
-
-    def test_get_ca_atoms_filters_nan(self) -> None:
-        """Test that get_ca_atoms filters out NaN entries."""
-        coords = np.array(
-            [
-                [1.0, 2.0, 3.0],
-                [np.nan, np.nan, np.nan],
-                [4.0, 5.0, 6.0],
-            ]
-        )
-        b_factors = np.array([10.0, 20.0, 30.0])
-        occupancies = np.array([1.0, 0.5, 0.8])
-
-        chain = ProteinChain(
-            chain_id="A",
-            sequence="ACD",
-            coords=coords,
-            b_factors=b_factors,
-            occupancies=occupancies,
-        )
-
-        coords, bfacts, occs = chain.get_ca_atoms()
-
-        assert coords.shape == (2, 3)
-        np.testing.assert_allclose(coords, [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        np.testing.assert_allclose(bfacts, [10.0, 30.0])
-        np.testing.assert_allclose(occs, [1.0, 0.8])
-
-
-class TestFilterByQuality:
+class TestGetBfacOccMask:
     """Tests for filter_by_quality method."""
 
-    def test_filter_by_plddt(self) -> None:
-        """Test filtering by minimum pLDDT threshold."""
+    def test_filter_by_bfctor(self) -> None:
+        """Test filtering by B-factor threshold."""
         chain = ProteinChain(
             chain_id="A",
             sequence="ACDEF",
@@ -250,81 +182,54 @@ class TestFilterByQuality:
             occupancies=np.ones(5),
         )
 
-        mask = chain.filter_by_quality(min_plddt=70.0)
+        mask = chain.get_bfac_occ_mask(min_bfactor=70.0)
         expected = np.array([True, False, True, False, True])
         np.testing.assert_array_equal(mask, expected)
 
-    def test_filter_by_bfactor(self) -> None:
-        """Test filtering by maximum B-factor threshold."""
+        mask = chain.get_bfac_occ_mask(max_bfactor=30.0)
+        expected = np.array([False, False, False, True, False])
+        np.testing.assert_array_equal(mask, expected)
+
+        mask = chain.get_bfac_occ_mask(max_bfactor=30.0, idx_list=[0, 2, 4])
+        expected = np.array([False, False, False])
+        np.testing.assert_array_equal(mask, expected)
+
+        mask = chain.get_bfac_occ_mask(max_bfactor=30.0, idx_list=[])
+        expected = np.array([], dtype=bool)
+        np.testing.assert_array_equal(mask, expected)
+
+    def test_filter_by_occupancy(self) -> None:
+        """Test filtering by occupancy threshold."""
         chain = ProteinChain(
             chain_id="A",
             sequence="ACDEF",
             coords=np.random.rand(5, 3),
-            b_factors=np.array([10.0, 50.0, 20.0, 80.0, 30.0]),
-            occupancies=np.ones(5),
+            b_factors=np.array([90.0, 50.0, 80.0, 30.0, 70.0]),
+            occupancies=np.array([1.0, 0.5, 0.8, 0.2, 0.9]),
         )
 
-        mask = chain.filter_by_quality(max_bfactor=30.0)
-        expected = np.array([True, False, True, False, True])
+        mask = chain.get_bfac_occ_mask(min_occ=0.5)
+        expected = np.array([True, True, True, False, True])
         np.testing.assert_array_equal(mask, expected)
 
-    def test_filter_excludes_missing_ca(self) -> None:
-        """Test that filter excludes residues with missing CA atoms."""
-        coords = np.array(
-            [
-                [1.0, 2.0, 3.0],
-                [np.nan, np.nan, np.nan],  # Missing CA
-                [4.0, 5.0, 6.0],
-            ]
-        )
-        chain = ProteinChain(
-            chain_id="A",
-            sequence="ACD",
-            coords=coords,
-            b_factors=np.array([80.0, 90.0, 85.0]),
-            occupancies=np.ones(3),
-        )
-
-        mask = chain.filter_by_quality(min_plddt=70.0)
-        expected = np.array([True, False, True])  # Middle one excluded (no CA)
+        mask = chain.get_bfac_occ_mask(min_occ=0.5, idx_list=[0, 2, 4])
+        expected = np.array([True, True, True])
         np.testing.assert_array_equal(mask, expected)
 
-    def test_filter_excludes_missing_bfactor(self) -> None:
+        mask = chain.get_bfac_occ_mask(min_occ=0.5, idx_list=[])
+        expected = np.array([], dtype=bool)
+        np.testing.assert_array_equal(mask, expected)
+
+    def test_filter_excludes_missing_values(self) -> None:
         """Test that filter excludes residues with missing B-factor."""
         chain = ProteinChain(
             chain_id="A",
-            sequence="ACD",
-            coords=np.random.rand(3, 3),
-            b_factors=np.array([80.0, np.nan, 85.0]),
-            occupancies=np.ones(3),
+            sequence="ACDYW",
+            coords=np.random.rand(5, 3),
+            b_factors=np.array([80.0, np.nan, 85.0, 70.0, 71.0]),
+            occupancies=np.array([1.0, 1.0, np.nan, 1.0, 1.0]),
         )
 
-        mask = chain.filter_by_quality(min_plddt=70.0)
-        expected = np.array([True, False, True])
+        mask = chain.get_bfac_occ_mask()
+        expected = np.array([True, False, False, True, True])
         np.testing.assert_array_equal(mask, expected)
-
-    def test_filter_mutual_exclusivity_raises(self) -> None:
-        """Test that specifying both filters raises ValueError."""
-        chain = ProteinChain(
-            chain_id="A",
-            sequence="AC",
-            coords=np.random.rand(2, 3),
-            b_factors=np.array([80.0, 90.0]),
-            occupancies=np.ones(2),
-        )
-
-        with pytest.raises(ValueError, match="mutually exclusive"):
-            chain.filter_by_quality(min_plddt=70.0, max_bfactor=30.0)
-
-    def test_filter_no_params_raises(self) -> None:
-        """Test that specifying neither filter raises ValueError."""
-        chain = ProteinChain(
-            chain_id="A",
-            sequence="AC",
-            coords=np.random.rand(2, 3),
-            b_factors=np.array([80.0, 90.0]),
-            occupancies=np.ones(2),
-        )
-
-        with pytest.raises(ValueError, match="Either min_plddt or max_bfactor must be specified"):
-            chain.filter_by_quality()
