@@ -374,9 +374,9 @@ def align_quaternary(
         logger.debug("Aligned %d CA pairs with RMSD %.3f Å", num_aligned, rmsd)
 
     # Calculate all chain centers and pairwise distances
-    fixed_centers = np.array([chn.coords.mean(axis=0) for chn in fixed_chains], dtype=np.float64)
+    fixed_centers = np.array([chn.coords.mean(axis=0) for chn in fixed_chains], dtype=float)
     mobile_centers = (
-        np.array([chn.coords.mean(axis=0) for chn in mobile_chains], dtype=np.float64) @ rotation.T + translation
+        np.array([chn.coords.mean(axis=0) for chn in mobile_chains], dtype=float) @ rotation.T + translation
     )
     distances = np.sqrt(np.sum((fixed_centers[:, np.newaxis, :] - mobile_centers[np.newaxis, :, :]) ** 2, axis=-1))
 

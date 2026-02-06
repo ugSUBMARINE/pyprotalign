@@ -42,9 +42,9 @@ class ProteinChain:
             ValueError: If validation fails
         """
         # Convert to numpy arrays with float64 dtype
-        self.coords = np.asarray(self.coords, dtype=np.float64)
-        self.b_factors = np.asarray(self.b_factors, dtype=np.float64)
-        self.occupancies = np.asarray(self.occupancies, dtype=np.float64)
+        self.coords = np.asarray(self.coords, dtype=float)
+        self.b_factors = np.asarray(self.b_factors, dtype=float)
+        self.occupancies = np.asarray(self.occupancies, dtype=float)
 
         n_residues = len(self.sequence)
 

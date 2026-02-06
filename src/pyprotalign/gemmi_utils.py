@@ -150,9 +150,9 @@ def create_chain(chain: gemmi.Chain) -> ProteinChain:
     n_residues = len(sequence)
 
     # Initialize arrays with NaN (for missing atoms)
-    coords = np.full((n_residues, 3), np.nan, dtype=np.float64)
-    b_factors = np.full(n_residues, np.nan, dtype=np.float64)
-    occupancies = np.full(n_residues, np.nan, dtype=np.float64)
+    coords = np.full((n_residues, 3), np.nan, dtype=float)
+    b_factors = np.full(n_residues, np.nan, dtype=float)
+    occupancies = np.full(n_residues, np.nan, dtype=float)
 
     # Extract CA atom data
     for i, residue in enumerate(polymer):
@@ -324,7 +324,7 @@ def apply_transformation(
 
 def generate_conflict_free_chain_map(
     structure: gemmi.Structure,
-    chain_pairs: list[tuple[str, str]],
+    chain_mapping: dict[str, str],
 ) -> dict[str, str]:
     """Generate chain rename map that avoids conflicts with unaligned chains.
 
@@ -335,35 +335,35 @@ def generate_conflict_free_chain_map(
 
     Args:
         structure: Mobile structure
-        chain_pairs: List of (fixed_name, mobile_name) tuples from alignment
+        chain_mapping: Dictionary with chain mappings (fixed to mobile) from alignment
 
     Returns:
         Complete rename mapping with conflict resolution via swaps
     """
     # Get all chain names in mobile structure
-    all_mobile_chains = {chain.name for model in structure for chain in model}
+    all_mobile_chains = {chain.name for chain in structure[0]}
 
     # Get aligned mobile chain names (sources being renamed)
-    aligned_mobile_chains = {mobile_name for _, mobile_name in chain_pairs}
+    aligned_mobile_chains = {mobile_name for mobile_name in chain_mapping.values()}
 
     # Build rename map with conflict resolution
-    chain_map: dict[str, str] = {}
+    chain_rename_map: dict[str, str] = {}
 
-    for fixed_name, mobile_name in chain_pairs:
+    for fixed_name, mobile_name in chain_mapping.items():
         # Skip identity renames (chain keeps same name)
         if fixed_name == mobile_name:
             continue
 
         # Add primary rename: mobile -> fixed
-        chain_map[mobile_name] = fixed_name
+        chain_rename_map[mobile_name] = fixed_name
 
         # Check for conflict: does fixed_name already exist as an unaligned chain?
         # An unaligned chain is one that exists but is NOT being renamed (not in aligned_mobile_chains)
         if fixed_name in all_mobile_chains and fixed_name not in aligned_mobile_chains:
             # Add swap: fixed_name -> mobile_name to move it out of the way
-            chain_map[fixed_name] = mobile_name
+            chain_rename_map[fixed_name] = mobile_name
 
-    return chain_map
+    return chain_rename_map
 
 
 def rename_chains(structure: gemmi.Structure, chain_map: dict[str, str]) -> None:

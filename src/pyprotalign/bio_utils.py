@@ -73,9 +73,9 @@ def create_chain(chain: object, chain_id: str | None = None) -> ProteinChain:
     # Convert 3-letter codes to 1-letter
     sequence = seq1("".join(sequence_chars))
 
-    coords = np.array(coords_list, dtype=np.float64)
-    b_factors = np.array(b_factors_list, dtype=np.float64)
-    occupancies = np.array(occupancies_list, dtype=np.float64)
+    coords = np.array(coords_list, dtype=float)
+    b_factors = np.array(b_factors_list, dtype=float)
+    occupancies = np.array(occupancies_list, dtype=float)
 
     return ProteinChain(
         chain_id=chain_id,

@@ -341,26 +341,27 @@ def main() -> int:
             # Rename the chains in mobile structure after quaternary alignment
             if args.rename_chains:
                 logger.info("Renaming chains...")
-                # chain_rename_map = generate_conflict_free_chain_map(mobile_st, chain_pairs)
-                # # Get all mobile chain names for complete reporting
-                # all_mobile_chains = sorted({chain.name for model in mobile_st for chain in model})
-                # aligned_renames = {mobile_name: fixed_name for fixed_name, mobile_name in chain_pairs}
+                chain_rename_map = generate_conflict_free_chain_map(mobile_st, chain_mapping)
 
-                # logger.debug("Chain renaming:")
-                # for chain_name in all_mobile_chains:
-                #     if chain_name in chain_rename_map:
-                #         new_name = chain_rename_map[chain_name]
-                #         if chain_name in aligned_renames and aligned_renames[chain_name] == new_name:
-                #             logger.debug("  %s → %s (aligned)", chain_name, new_name)
-                #         else:
-                #             logger.debug("  %s → %s (unaligned, renamed to avoid conflict)", chain_name, new_name)
-                #     elif chain_name in aligned_renames:
-                #         # Identity rename (same name), aligned but not in map
-                #         logger.debug("  %s → %s (aligned)", chain_name, chain_name)
-                #     else:
-                #         # Unaligned chain that keeps its name
-                #         logger.debug("  %s → %s (unaligned)", chain_name, chain_name)
-                # rename_chains(mobile_st, chain_rename_map)
+                if logger.isEnabledFor(logging.DEBUG):
+                    # Get all mobile chain names for complete reporting
+                    all_mobile_chains = sorted({chain.name for chain in mobile_st[0]})
+                    aligned_renames = {mobile_name: fixed_name for fixed_name, mobile_name in chain_mapping.items()}
+                    for chain_name in all_mobile_chains:
+                        if chain_name in chain_rename_map:
+                            new_name = chain_rename_map[chain_name]
+                            if chain_name in aligned_renames and aligned_renames[chain_name] == new_name:
+                                logger.debug("  %s → %s (aligned)", chain_name, new_name)
+                            else:
+                                logger.debug("  %s → %s (unaligned, renamed to avoid conflict)", chain_name, new_name)
+                        elif chain_name in aligned_renames:
+                            # Identity rename (same name), aligned but not in map
+                            logger.debug("  %s → %s (aligned)", chain_name, chain_name)
+                        else:
+                            # Unaligned chain that keeps its name
+                            logger.debug("  %s → %s (unaligned)", chain_name, chain_name)
+
+                rename_chains(mobile_st, chain_rename_map)
 
             # Write output
             if num_mobile == 1:
