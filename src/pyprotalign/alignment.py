@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+from numpy.typing import NDArray
 
 from .chain import ProteinChain
 from .gemmi_utils import align_sequences
@@ -354,6 +355,12 @@ def align_quaternary(
     # Seed alignment
     fixed_chain_map = {chn.chain_id: chn for chn in fixed_chains}
     mobile_chain_map = {chn.chain_id: chn for chn in mobile_chains}
+    if fixed_seed and fixed_seed not in fixed_chain_map:
+        available = ", ".join(sorted(fixed_chain_map)) or "none"
+        raise ValueError(f"Fixed seed chain '{fixed_seed}' not found. Available chains: {available}")
+    if mobile_seed and mobile_seed not in mobile_chain_map:
+        available = ", ".join(sorted(mobile_chain_map)) or "none"
+        raise ValueError(f"Mobile seed chain '{mobile_seed}' not found. Available chains: {available}")
     fixed_chain = fixed_chain_map[fixed_seed] if fixed_seed else fixed_chains[0]
     mobile_chain = mobile_chain_map[mobile_seed] if mobile_seed else mobile_chains[0]
 
@@ -376,14 +383,14 @@ def align_quaternary(
         logger.debug("Aligned %d CA pairs with RMSD %.3f Å", num_aligned, rmsd)
 
     # Calculate all chain centers and pairwise distances
-    fixed_centers = np.array([chn.coords.mean(axis=0) for chn in fixed_chains], dtype=float)
+    fixed_centers = np.array([np.nanmean(chn.coords, axis=0) for chn in fixed_chains], dtype=float)
     mobile_centers = (
-        np.array([chn.coords.mean(axis=0) for chn in mobile_chains], dtype=float) @ rotation.T + translation
+        np.array([np.nanmean(chn.coords, axis=0) for chn in mobile_chains], dtype=float) @ rotation.T + translation
     )
     distances = np.sqrt(np.sum((fixed_centers[:, np.newaxis, :] - mobile_centers[np.newaxis, :, :]) ** 2, axis=-1))
 
     if debug_enabled:
-        logger.debug("\n-- Chain center distances after seed alignemnt. --")
+        logger.debug("\n-- Chain center distances after seed alignment. --")
         for i, row in enumerate(distances):
             for j, distance in enumerate(row):
                 status = "✓" if distance <= distance_threshold else "✗"
@@ -392,17 +399,7 @@ def align_quaternary(
                 )
         logger.debug("")
 
-    matched_idx = np.argwhere(distances <= distance_threshold)
-    n_rows = matched_idx.shape[0]
-    if n_rows == 0:
-        raise ValueError(
-            f"No matching chains found. Adjust distance threshold (current value: {distance_threshold:.2f} Å)."
-        )
-    if n_rows > len(fixed_chains) or n_rows > len(mobile_chains):
-        raise ValueError(
-            f"Inconsistent chain mapping. Adjust distance threshold (current value: {distance_threshold:.2f} Å)."
-        )
-
+    matched_idx = _match_chain_centers(distances, distance_threshold)
     chain_mapping = {fixed_chains[i].chain_id: mobile_chains[j].chain_id for i, j in matched_idx}
 
     logger.info(
@@ -424,3 +421,32 @@ def align_quaternary(
     )
 
     return rotation, translation, rmsd, num_aligned, chain_mapping
+
+
+def _match_chain_centers(distances: NDArray[np.floating], distance_threshold: float) -> list[tuple[int, int]]:
+    """Greedy one-to-one chain matching based on center distances within a threshold."""
+    masked = distances.copy()
+    masked[~np.isfinite(masked)] = np.inf
+    masked[masked > distance_threshold] = np.inf
+
+    if not np.isfinite(masked).any():
+        raise ValueError(
+            f"No matching chains found. Adjust distance threshold (current value: {distance_threshold:.2f} Å)."
+        )
+
+    order = np.argsort(masked, axis=None)
+    used_fixed = np.zeros(masked.shape[0], dtype=bool)
+    used_mobile = np.zeros(masked.shape[1], dtype=bool)
+
+    pairs: list[tuple[int, int]] = []
+    for idx in order:
+        i, j = np.unravel_index(idx, masked.shape)
+        if not np.isfinite(masked[i, j]):
+            break
+        if used_fixed[i] or used_mobile[j]:
+            continue
+        pairs.append((i, j))
+        used_fixed[i] = True
+        used_mobile[j] = True
+
+    return pairs

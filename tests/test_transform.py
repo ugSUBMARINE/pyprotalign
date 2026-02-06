@@ -4,7 +4,7 @@ import gemmi
 import numpy as np
 import pytest
 
-from pyprotalign.transform import apply_transformation, generate_conflict_free_chain_map, rename_chains
+from pyprotalign.gemmi_utils import apply_transformation, generate_conflict_free_chain_map, rename_chains
 
 
 class TestApplyTransformation:
@@ -281,8 +281,8 @@ class TestGenerateConflictFreeChainMap:
         structure.add_model(model)
 
         # Align A->X, B->Y (no conflict with existing C)
-        chain_pairs = [("X", "A"), ("Y", "B")]
-        chain_map = generate_conflict_free_chain_map(structure, chain_pairs)
+        chain_mapping = {"X": "A", "Y": "B"}
+        chain_map = generate_conflict_free_chain_map(structure, chain_mapping)
 
         assert chain_map == {"A": "X", "B": "Y"}
 
@@ -298,8 +298,8 @@ class TestGenerateConflictFreeChainMap:
         structure.add_model(model)
 
         # Align A->B, D->D (conflict: B exists as unaligned chain)
-        chain_pairs = [("B", "A"), ("D", "D")]
-        chain_map = generate_conflict_free_chain_map(structure, chain_pairs)
+        chain_mapping = {"B": "A", "D": "D"}
+        chain_map = generate_conflict_free_chain_map(structure, chain_mapping)
 
         # Should add swap: B->A, skip identity D->D
         assert chain_map == {"A": "B", "B": "A"}
@@ -316,8 +316,8 @@ class TestGenerateConflictFreeChainMap:
         structure.add_model(model)
 
         # Align C->A, D->B (conflicts: both A and B exist as unaligned)
-        chain_pairs = [("A", "C"), ("B", "D")]
-        chain_map = generate_conflict_free_chain_map(structure, chain_pairs)
+        chain_mapping = {"A": "C", "B": "D"}
+        chain_map = generate_conflict_free_chain_map(structure, chain_mapping)
 
         # Should add swaps: A->C, B->D
         assert chain_map == {"C": "A", "A": "C", "D": "B", "B": "D"}
@@ -335,8 +335,8 @@ class TestGenerateConflictFreeChainMap:
 
         # Align A->B, B->C where C doesn't exist in mobile
         # This tests that B being aligned means no swap even though B exists
-        chain_pairs = [("B", "A"), ("C", "B")]
-        chain_map = generate_conflict_free_chain_map(structure, chain_pairs)
+        chain_mapping = {"B": "A", "C": "B"}
+        chain_map = generate_conflict_free_chain_map(structure, chain_mapping)
 
         # Should not add swap for B since it's being renamed to C
         assert chain_map == {"A": "B", "B": "C"}
@@ -354,8 +354,8 @@ class TestGenerateConflictFreeChainMap:
         structure.add_model(model)
 
         # Real alignment: B(fixed)->A(mobile), D(fixed)->D(mobile)
-        chain_pairs = [("B", "A"), ("D", "D")]
-        chain_map = generate_conflict_free_chain_map(structure, chain_pairs)
+        chain_mapping = {"B": "A", "D": "D"}
+        chain_map = generate_conflict_free_chain_map(structure, chain_mapping)
 
         # Should swap B->A to avoid conflict, skip identity D->D
         assert chain_map == {"A": "B", "B": "A"}

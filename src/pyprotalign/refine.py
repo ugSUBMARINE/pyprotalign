@@ -23,8 +23,12 @@ def iterative_superpose(
     Similar to PyMOL's align command. Each cycle:
     1. Superpose using current atom pairs
     2. Calculate RMSD
-    3. Reject pairs with distance > cutoff_factor * RMSD
+    3. Recompute the inlier set by applying cutoff_factor * RMSD to all pairs
     4. Repeat until RMSD stops improving or max_cycles reached
+
+    Note:
+        Because the inlier set is recomputed from all pairs each cycle, some pairs
+        excluded in earlier cycles may be re-included if they fall within the new cutoff.
 
     Args:
         fixed: Fixed coordinates, shape (N, 3)

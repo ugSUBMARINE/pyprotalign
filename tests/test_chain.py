@@ -7,6 +7,7 @@ import numpy as np
 import pytest
 
 from pyprotalign.chain import ProteinChain
+from pyprotalign.gemmi_utils import create_chain
 
 
 class TestProteinChainValidation:
@@ -109,7 +110,7 @@ class TestFromGemmi:
         structure.setup_entities()
         chain = structure[0]["A"]
 
-        pchain = ProteinChain.from_gemmi(chain)
+        pchain = create_chain(chain)
 
         assert pchain.chain_id == "A"
         assert pchain.sequence == "AC"
@@ -133,7 +134,7 @@ class TestFromGemmi:
         structure.setup_entities()
         chain = structure[0]["A"]
 
-        pchain = ProteinChain.from_gemmi(chain)
+        pchain = create_chain(chain)
 
         assert pchain.sequence == "AC"
         assert not np.isnan(pchain.coords[0]).any()
@@ -152,21 +153,7 @@ class TestFromGemmi:
         structure.setup_entities()
 
         with pytest.raises(ValueError, match="is not a protein chain"):
-            ProteinChain.from_gemmi(structure[0]["A"])
-
-
-class TestFromBiopython:
-    """Tests for ProteinChain.from_biopython()."""
-
-    def test_from_biopython_not_installed(self) -> None:
-        """Test error when Biopython not available."""
-
-        # Create a mock chain object
-        class MockChain:
-            id = "A"
-
-        with pytest.raises(ImportError, match="Biopython is required"):
-            ProteinChain.from_biopython(MockChain())
+            create_chain(structure[0]["A"])
 
 
 class TestGetBfacOccMask:

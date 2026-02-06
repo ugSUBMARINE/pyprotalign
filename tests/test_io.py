@@ -5,7 +5,7 @@ from pathlib import Path
 import gemmi
 import pytest
 
-from pyprotalign.io import load_structure, write_structure
+from pyprotalign.gemmi_utils import load_structure, write_structure
 
 
 class TestLoadStructure:
@@ -72,7 +72,7 @@ class TestWriteStructure:
     def test_write_pdb(self, tmp_path: Path) -> None:
         """Test writing PDB file."""
         structure = gemmi.Structure()
-        model = gemmi.Model("1")
+        model = gemmi.Model(1)
         chain = gemmi.Chain("A")
         residue = gemmi.Residue()
         residue.name = "ALA"
@@ -98,7 +98,7 @@ class TestWriteStructure:
         """Test writing mmCIF file."""
         structure = gemmi.Structure()
         structure.name = "test"
-        model = gemmi.Model("1")
+        model = gemmi.Model(1)
         chain = gemmi.Chain("A")
         residue = gemmi.Residue()
         residue.name = "ALA"
@@ -125,7 +125,7 @@ class TestWriteStructure:
         """Test automatic format detection from file extension."""
         structure = gemmi.Structure()
         structure.name = "test"
-        model = gemmi.Model("1")
+        model = gemmi.Model(1)
         chain = gemmi.Chain("A")
         residue = gemmi.Residue()
         residue.name = "ALA"

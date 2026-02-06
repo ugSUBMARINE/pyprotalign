@@ -3,7 +3,8 @@
 import gemmi
 import pytest
 
-from pyprotalign.alignment import align_multi_chain, align_quaternary, align_sequences
+from pyprotalign.alignment import align_globally, align_quaternary
+from pyprotalign.gemmi_utils import align_sequences, get_all_protein_chains
 
 
 class TestAlignSequences:
@@ -135,13 +136,17 @@ class TestAlignMultiChain:
         fixed_st = self._create_structure([("A", "ALA GLY", None), ("B", "SER THR", None)])
         mobile_st = self._create_structure([("A", "ALA GLY", None), ("B", "SER THR", None)])
 
-        fixed_coords, mobile_coords, chain_ids = align_multi_chain(fixed_st, mobile_st)
+        # Extract ProteinChain objects
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+        fixed_map = {c.chain_id: c for c in fixed_chains}
+        mobile_map = {c.chain_id: c for c in mobile_chains}
 
-        # Should have 4 pairs (2 from A, 2 from B)
-        assert len(fixed_coords) == 4
-        assert len(mobile_coords) == 4
-        assert len(chain_ids) == 4
-        assert chain_ids == ["A", "A", "B", "B"]
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_globally(fixed_map, mobile_map)
+
+        # Should align 4 CA pairs (2 from A, 2 from B)
+        assert num_aligned == 4
+        assert chain_mapping == {"A": "A", "B": "B"}
 
     def test_different_chain_counts(self) -> None:
         """Test structures with different chain counts."""
@@ -149,19 +154,29 @@ class TestAlignMultiChain:
         fixed_st = self._create_structure([("A", "ALA GLY", None), ("B", "SER THR", None), ("C", "VAL LEU", None)])
         mobile_st = self._create_structure([("A", "ALA GLY", None), ("B", "SER THR", None)])
 
-        fixed_coords, mobile_coords, chain_ids = align_multi_chain(fixed_st, mobile_st)
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+        fixed_map = {c.chain_id: c for c in fixed_chains}
+        mobile_map = {c.chain_id: c for c in mobile_chains}
+
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_globally(fixed_map, mobile_map)
 
         # Should only use common chains A and B (4 pairs total)
-        assert len(fixed_coords) == 4
-        assert chain_ids == ["A", "A", "B", "B"]
+        assert num_aligned == 4
+        assert chain_mapping == {"A": "A", "B": "B"}
 
     def test_no_matching_chains(self) -> None:
         """Test error when no matching chains."""
         fixed_st = self._create_structure([("A", "ALA GLY", None)])
         mobile_st = self._create_structure([("B", "SER THR", None)])
 
-        with pytest.raises(ValueError, match="No matching protein chains found"):
-            align_multi_chain(fixed_st, mobile_st)
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+        fixed_map = {c.chain_id: c for c in fixed_chains}
+        mobile_map = {c.chain_id: c for c in mobile_chains}
+
+        with pytest.raises(ValueError, match="No matching chain labels found"):
+            align_globally(fixed_map, mobile_map)
 
     def test_insufficient_aligned_pairs(self) -> None:
         """Test error when fewer than 3 aligned pairs."""
@@ -169,24 +184,31 @@ class TestAlignMultiChain:
         fixed_st = self._create_structure([("A", "ALA GLY", None)])
         mobile_st = self._create_structure([("A", "ALA GLY", None)])
 
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+        fixed_map = {c.chain_id: c for c in fixed_chains}
+        mobile_map = {c.chain_id: c for c in mobile_chains}
+
         with pytest.raises(ValueError, match="Need at least 3 aligned CA pairs"):
-            align_multi_chain(fixed_st, mobile_st)
+            align_globally(fixed_map, mobile_map)
 
     def test_coordinate_extraction(self) -> None:
         """Test that coordinates are correctly extracted."""
         fixed_st = self._create_structure([("A", "ALA GLY SER", None)])
         mobile_st = self._create_structure([("A", "ALA GLY SER", None)])
 
-        fixed_coords, mobile_coords, chain_ids = align_multi_chain(fixed_st, mobile_st)
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+        fixed_map = {c.chain_id: c for c in fixed_chains}
+        mobile_map = {c.chain_id: c for c in mobile_chains}
 
-        # Check shapes
-        assert fixed_coords.shape == (3, 3)
-        assert mobile_coords.shape == (3, 3)
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_globally(fixed_map, mobile_map)
 
-        # Fixed coords should be (0,0,0), (1,0,0), (2,0,0)
-        assert fixed_coords[0, 0] == 0.0
-        assert fixed_coords[1, 0] == 1.0
-        assert fixed_coords[2, 0] == 2.0
+        # Should align 3 CA pairs
+        assert num_aligned == 3
+        # Check that rotation is identity (identical structures)
+        import numpy as np
+        assert np.allclose(rotation, np.eye(3), atol=1e-10)
 
     def test_chain_order_deterministic(self) -> None:
         """Test that chain order is deterministic (sorted)."""
@@ -194,23 +216,31 @@ class TestAlignMultiChain:
         fixed_st = self._create_structure([("C", "ALA GLY", None), ("A", "SER THR", None), ("B", "VAL LEU", None)])
         mobile_st = self._create_structure([("B", "VAL LEU", None), ("A", "SER THR", None), ("C", "ALA GLY", None)])
 
-        _, _, chain_ids = align_multi_chain(fixed_st, mobile_st)
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+        fixed_map = {c.chain_id: c for c in fixed_chains}
+        mobile_map = {c.chain_id: c for c in mobile_chains}
 
-        # Should be in sorted order: A, A, B, B, C, C
-        assert chain_ids == ["A", "A", "B", "B", "C", "C"]
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_globally(fixed_map, mobile_map)
+
+        # Chain mapping should be sorted (A, B, C)
+        assert list(chain_mapping.keys()) == ["A", "B", "C"]
 
     def test_missing_ca_atoms_do_not_shift_indices(self) -> None:
         """Test alignment when CA atoms are missing in fixed or mobile."""
         fixed_st = self._create_structure([("A", "ALA GLY SER THR", {1})])
         mobile_st = self._create_structure([("A", "ALA GLY SER THR", None)])
 
-        fixed_coords, mobile_coords, chain_ids = align_multi_chain(fixed_st, mobile_st)
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+        fixed_map = {c.chain_id: c for c in fixed_chains}
+        mobile_map = {c.chain_id: c for c in mobile_chains}
 
-        assert len(fixed_coords) == 3
-        assert len(mobile_coords) == 3
-        assert chain_ids == ["A", "A", "A"]
-        assert [float(x) for x in fixed_coords[:, 0]] == [0.0, 2.0, 3.0]
-        assert [float(x) for x in mobile_coords[:, 0]] == [0.0, 2.0, 3.0]
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_globally(fixed_map, mobile_map)
+
+        # Should align 3 CA pairs (index 1 missing in fixed)
+        assert num_aligned == 3
+        assert chain_mapping == {"A": "A"}
 
 
 class TestAlignQuaternary:
@@ -281,13 +311,17 @@ class TestAlignQuaternary:
             ]
         )
 
-        fixed_coords, mobile_coords, chain_pairs = align_quaternary(fixed_st, mobile_st, distance_threshold=15.0)
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
+            fixed_chains, mobile_chains, distance_threshold=15.0
+        )
 
         # Should match both chains
-        assert len(chain_pairs) == 2
-        assert ("A", "A") in chain_pairs
-        assert ("B", "B") in chain_pairs
-        assert len(fixed_coords) == 6  # 3 residues × 2 chains
+        assert len(chain_mapping) == 2
+        assert chain_mapping == {"A": "A", "B": "B"}
+        assert num_aligned == 6  # 3 residues × 2 chains
 
     def test_permuted_labels(self) -> None:
         """Test quaternary alignment with swapped chain labels."""
@@ -307,12 +341,16 @@ class TestAlignQuaternary:
             ]
         )
 
-        fixed_coords, mobile_coords, chain_pairs = align_quaternary(fixed_st, mobile_st, distance_threshold=15.0)
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
+            fixed_chains, mobile_chains, distance_threshold=15.0
+        )
 
         # Should match A->C (seed), B->D (proximity)
-        assert len(chain_pairs) == 2
-        assert ("A", "C") in chain_pairs
-        assert ("B", "D") in chain_pairs
+        assert len(chain_mapping) == 2
+        assert chain_mapping == {"A": "C", "B": "D"}
 
     def test_missing_chain_in_mobile(self) -> None:
         """Test when fixed has more chains than mobile."""
@@ -331,12 +369,16 @@ class TestAlignQuaternary:
             ]
         )
 
-        fixed_coords, mobile_coords, chain_pairs = align_quaternary(fixed_st, mobile_st, distance_threshold=15.0)
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
+            fixed_chains, mobile_chains, distance_threshold=15.0
+        )
 
         # Should match A->A, B->B only (C has no match)
-        assert len(chain_pairs) == 2
-        assert ("A", "A") in chain_pairs
-        assert ("B", "B") in chain_pairs
+        assert len(chain_mapping) == 2
+        assert chain_mapping == {"A": "A", "B": "B"}
 
     def test_distance_threshold_filters(self) -> None:
         """Test that distance threshold filters out distant chains."""
@@ -357,15 +399,18 @@ class TestAlignQuaternary:
             ]
         )
 
-        fixed_coords, mobile_coords, chain_pairs = align_quaternary(
-            fixed_st,
-            mobile_st,
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
+            fixed_chains,
+            mobile_chains,
             distance_threshold=5.0,  # Small threshold
         )
 
         # Should only match seed chain A (C is too far from B)
-        assert len(chain_pairs) == 1
-        assert ("A", "A") in chain_pairs
+        assert len(chain_mapping) == 1
+        assert chain_mapping == {"A": "A"}
 
     def test_insufficient_pairs_error(self) -> None:
         """Test error when seed chains have too few aligned pairs."""
@@ -373,8 +418,11 @@ class TestAlignQuaternary:
         fixed_st = self._create_structure([("A", "ALA GLY", (0.0, 0.0, 0.0), None)])
         mobile_st = self._create_structure([("A", "ALA GLY", (0.0, 0.0, 0.0), None)])
 
-        with pytest.raises(ValueError, match="Need at least 3 aligned CA pairs in seed chains"):
-            align_quaternary(fixed_st, mobile_st, distance_threshold=10.0)
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+
+        with pytest.raises(ValueError, match="Need at least 3 aligned CA pairs"):
+            align_quaternary(fixed_chains, mobile_chains, distance_threshold=10.0)
 
     def test_seed_chain_selection(self) -> None:
         """Test specifying seed chains explicitly."""
@@ -392,13 +440,16 @@ class TestAlignQuaternary:
             ]
         )
 
-        fixed_coords, mobile_coords, chain_pairs = align_quaternary(
-            fixed_st, mobile_st, distance_threshold=15.0, seed_fixed_chain="B", seed_mobile_chain="Y"
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
+            fixed_chains, mobile_chains, distance_threshold=15.0, fixed_seed="B", mobile_seed="Y"
         )
 
         # Should use B->Y as seed
-        assert ("B", "Y") in chain_pairs
-        assert len(chain_pairs) == 2
+        assert chain_mapping == {"B": "Y", "A": "X"}
+        assert len(chain_mapping) == 2
 
     def test_quaternary_skips_chains_without_ca(self) -> None:
         """Test that chains without CA atoms are skipped in matching."""
@@ -415,7 +466,12 @@ class TestAlignQuaternary:
             ]
         )
 
-        _, _, chain_pairs = align_quaternary(fixed_st, mobile_st, distance_threshold=15.0)
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
 
-        assert len(chain_pairs) == 1
-        assert ("A", "A") in chain_pairs
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
+            fixed_chains, mobile_chains, distance_threshold=15.0
+        )
+
+        assert len(chain_mapping) == 1
+        assert chain_mapping == {"A": "A"}

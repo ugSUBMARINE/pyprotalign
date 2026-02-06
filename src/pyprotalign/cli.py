@@ -167,7 +167,11 @@ def _align_two_chains(
     fixed_chain: ProteinChain, mobile_st: gemmi.Structure, args: argparse.Namespace
 ) -> tuple[np.ndarray, np.ndarray, float, int]:
     """Align two chains and return rotation, translation, RMSD, and number of aligned pairs."""
-    mobile_chain = get_chain(mobile_st[0], args.mobile_chain)
+    try:
+        mobile_chain = get_chain(mobile_st[0], args.mobile_chain)
+    except ValueError as e:
+        raise ValueError(f"Mobile structure has no matching protein chain: {e}") from e
+
     logger.info("Fixed:  chain %s, %d residues", fixed_chain.chain_id, len(fixed_chain.sequence))
     logger.info("Mobile: chain %s, %d residues", mobile_chain.chain_id, len(mobile_chain.sequence))
 
@@ -189,12 +193,16 @@ def _align_two_chains(
     return rotation, translation, rmsd, num_aligned
 
 
-def _align_gloablly(
+def _align_globally(
     fixed_chains_map: dict[str, ProteinChain], mobile_st: gemmi.Structure, args: argparse.Namespace
 ) -> tuple[np.ndarray, np.ndarray, float, int]:
     """Align all chains globally and return rotation, translation, RMSD, and number of aligned pairs."""
-    mobile_chains = get_all_protein_chains(mobile_st[0])
+    try:
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+    except ValueError as e:
+        raise ValueError(f"Mobile structure has no protein chains: {e}") from e
     mobile_chains_map = {chain.chain_id: chain for chain in mobile_chains}
+
     rotation, translation, rmsd, num_aligned, chain_mapping = align_globally(
         fixed_chains_map,
         mobile_chains_map,
@@ -228,7 +236,11 @@ def _align_quaternary(
     fixed_chains: list[ProteinChain], mobile_st: gemmi.Structure, args: argparse.Namespace
 ) -> tuple[np.ndarray, np.ndarray, float, int, dict[str, str]]:
     """Perform quaternary alignment and return rotation, translation, RMSD, and number of aligned pairs."""
-    mobile_chains = get_all_protein_chains(mobile_st[0])
+    try:
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+    except ValueError as e:
+        raise ValueError(f"Mobile structure has no protein chains: {e}") from e
+
     rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
         fixed_chains,
         mobile_chains,
@@ -243,6 +255,7 @@ def _align_quaternary(
         max_bfactor=args.max_bfac,
         min_occ=args.min_occ,
     )
+
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug("\n-- Summary --\n")
 
@@ -289,6 +302,8 @@ def main() -> int:
 
         # Extract protein chains from fixed structure
         fixed_chains = get_all_protein_chains(fixed_st[0])
+        if not fixed_chains:
+            raise ValueError("No protein chains found in fixed structure")
         fixed_chains_map = {chain.chain_id: chain for chain in fixed_chains}
 
         if args.fixed_chain and args.fixed_chain not in fixed_chains_map:
@@ -328,7 +343,7 @@ def main() -> int:
 
             # Perform the different types of alignment
             if args.global_mode:
-                rotation, translation, rmsd, num_aligned = _align_gloablly(fixed_chains_map, mobile_st, args)
+                rotation, translation, rmsd, num_aligned = _align_globally(fixed_chains_map, mobile_st, args)
             elif args.quaternary:
                 rotation, translation, rmsd, num_aligned, chain_mapping = _align_quaternary(
                     fixed_chains, mobile_st, args
@@ -372,6 +387,8 @@ def main() -> int:
             # Write output
             if num_mobile == 1:
                 output_file = Path(args.output)
+                if output_file.suffix.lower() not in [".cif", ".pdb"]:
+                    output_file = output_file.with_suffix(".cif")
             else:
                 output_file = Path.cwd() / f"{mobile_path.stem}_{suffix}{output_ext}"
             write_structure(mobile_st, str(output_file))
