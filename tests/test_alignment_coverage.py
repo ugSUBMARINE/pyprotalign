@@ -1,16 +1,13 @@
 """Additional tests for alignment.py coverage."""
 
 import gemmi
-import numpy as np
 import pytest
 
 from pyprotalign.alignment import align_globally, align_quaternary, align_two_chains
 from pyprotalign.gemmi_utils import get_all_protein_chains
 
 
-def _create_chain(
-    name: str, sequence: str, offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
-) -> gemmi.Chain:
+def _create_chain(name: str, sequence: str, offset: tuple[float, float, float] = (0.0, 0.0, 0.0)) -> gemmi.Chain:
     """Helper to create a chain with sequence."""
     chain = gemmi.Chain(name)
     residues = sequence.split()
@@ -110,10 +107,18 @@ class TestAlignGloballyByOrder:
         """Test aligning chains by their order instead of ID."""
         # Fixed: A, B, C; Mobile: X, Y, Z (different IDs, same order)
         fixed_st = _create_structure(
-            [("A", "ALA GLY SER", (0.0, 0.0, 0.0)), ("B", "THR VAL", (0.0, 10.0, 0.0)), ("C", "LEU ILE", (0.0, 20.0, 0.0))]
+            [
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0)),
+                ("B", "THR VAL", (0.0, 10.0, 0.0)),
+                ("C", "LEU ILE", (0.0, 20.0, 0.0)),
+            ]
         )
         mobile_st = _create_structure(
-            [("X", "ALA GLY SER", (0.0, 0.0, 0.0)), ("Y", "THR VAL", (0.0, 10.0, 0.0)), ("Z", "LEU ILE", (0.0, 20.0, 0.0))]
+            [
+                ("X", "ALA GLY SER", (0.0, 0.0, 0.0)),
+                ("Y", "THR VAL", (0.0, 10.0, 0.0)),
+                ("Z", "LEU ILE", (0.0, 20.0, 0.0)),
+            ]
         )
 
         fixed_chains = get_all_protein_chains(fixed_st[0])

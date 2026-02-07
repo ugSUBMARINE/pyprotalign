@@ -141,6 +141,12 @@ def create_chain(chain: gemmi.Chain) -> ProteinChain:
 
     Raises:
         ValueError: If chain is not a protein chain or has no residues
+
+    Note:
+        Alternate locations (altlocs) are handled by Gemmi's default atom
+        selection behavior when iterating residues. This may differ from
+        Biopython's behavior (which often selects the higher-occupancy altloc),
+        leading to small discrepancies in coordinates, B-factors, and occupancies.
     """
     # Get polymer residues
     polymer = chain.get_polymer()

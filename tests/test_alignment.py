@@ -208,6 +208,7 @@ class TestAlignMultiChain:
         assert num_aligned == 3
         # Check that rotation is identity (identical structures)
         import numpy as np
+
         assert np.allclose(rotation, np.eye(3), atol=1e-10)
 
     def test_chain_order_deterministic(self) -> None:
