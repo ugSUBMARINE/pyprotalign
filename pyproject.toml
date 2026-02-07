@@ -52,6 +52,7 @@ exclude = [
 
 [dependency-groups]
 dev = [
+    "biopython>=1.86",
     "mypy>=1.19.1",
     "pytest>=9.0.2",
     "pytest-cov>=7.0.0",
