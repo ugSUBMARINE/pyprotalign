@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from functools import lru_cache
 from pathlib import Path
-from textwrap import wrap
 
 import gemmi
 import numpy as np
@@ -53,9 +52,12 @@ def align_sequences(seq_1: str, seq_2: str) -> tuple[tuple[int | None, int | Non
     # log alignment for debugging
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug("\nSequence alignment:\n")
-        for line_1, match_line, line_2 in zip(
-            wrap(aligned_1, width=60), wrap(matches, width=60), wrap(aligned_2, width=60), strict=True
-        ):
+        # Manual chunking to handle spaces correctly
+        width = 60
+        for i in range(0, len(aligned_1), width):
+            line_1 = aligned_1[i : i + width]
+            match_line = matches[i : i + width]
+            line_2 = aligned_2[i : i + width]
             logger.debug(" Fixed: %s", line_1)
             logger.debug("        %s", match_line)
             logger.debug("Mobile: %s\n", line_2)
