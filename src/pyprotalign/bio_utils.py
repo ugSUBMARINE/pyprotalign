@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from pathlib import Path
 from typing import cast
 
@@ -113,7 +114,8 @@ def create_chain(chain: Chain, chain_id: str | None = None) -> ProteinChain:
     )
 
 
-def align_sequences(seq_1: str, seq_2: str) -> list[tuple[int | None, int | None]]:
+@lru_cache(maxsize=128)
+def align_sequences(seq_1: str, seq_2: str) -> tuple[tuple[int | None, int | None], ...]:
     """Align two sequences and return paired indices.
 
     Args:
@@ -121,12 +123,14 @@ def align_sequences(seq_1: str, seq_2: str) -> list[tuple[int | None, int | None
         seq_2: Second sequence (mobile)
 
     Returns:
-        List of paired indices. Each tuple contains (seq1_idx, seq2_idx).
+        Tuple of paired indices. Each tuple contains (seq1_idx, seq2_idx).
         Gaps are indicated by 'None'.
 
     Note:
         Uses Biopython's PairwiseAligner in 'global' mode with BLOSUM62 scoring,
         'open_gap_score' -10, and 'extend_gap_score' -0.5.
+        Results are cached using LRU cache (maxsize=128) for performance
+        in multi-chain and batch alignment scenarios.
     """
     aligner = PairwiseAligner(  # type: ignore[no-untyped-call]
         mode="global",
@@ -144,10 +148,10 @@ def align_sequences(seq_1: str, seq_2: str) -> list[tuple[int | None, int | None
         logger.debug("\nScore: %.0f", alignment.score)
         logger.debug("Indentity: %.1f%%\n", alignment.counts().identities / len(seq_1) * 100.0)
 
-    pairs = [
+    pairs = tuple(
         (int(idx_1) if idx_1 != -1 else None, int(idx_2) if idx_2 != -1 else None)
         for idx_1, idx_2 in zip(*alignment.indices, strict=True)
-    ]
+    )
 
     return pairs
 

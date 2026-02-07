@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from pathlib import Path
 from textwrap import wrap
 
@@ -15,7 +16,8 @@ from .chain import ProteinChain
 logger = logging.getLogger(__name__)
 
 
-def align_sequences(seq_1: str, seq_2: str) -> list[tuple[int | None, int | None]]:
+@lru_cache(maxsize=128)
+def align_sequences(seq_1: str, seq_2: str) -> tuple[tuple[int | None, int | None], ...]:
     """Align two sequences and return paired indices.
 
     Args:
@@ -23,14 +25,18 @@ def align_sequences(seq_1: str, seq_2: str) -> list[tuple[int | None, int | None
         seq_2: Second sequence (mobile)
 
     Returns:
-        List of paired indices. Each tuple contains (seq1_idx, seq2_idx).
+        Tuple of paired indices. Each tuple contains (seq1_idx, seq2_idx).
         None indicates gap at that position.
 
     Example:
         For alignment:
             seq_1: AC-DEFG
             seq_2: ACYEDF-
-        Returns: [(0,0), (1,1), (None,2), (2,3), (3,4), (4,5), (5,None)]
+        Returns: ((0,0), (1,1), (None,2), (2,3), (3,4), (4,5), (5,None))
+
+    Note:
+        Results are cached using LRU cache (maxsize=128) for performance
+        in multi-chain and batch alignment scenarios.
     """
     result = gemmi.align_string_sequences(
         gemmi.expand_one_letter_sequence(seq_1, gemmi.ResidueKind.AA),
@@ -76,7 +82,7 @@ def align_sequences(seq_1: str, seq_2: str) -> list[tuple[int | None, int | None
             idx_1 += 1
             idx_2 += 1
 
-    return pairs
+    return tuple(pairs)
 
 
 def align_structures(

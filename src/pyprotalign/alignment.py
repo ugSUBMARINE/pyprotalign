@@ -105,14 +105,14 @@ def align_two_chains(
 
 
 def _get_indices_from_pairs(
-    chn_1: ProteinChain, chn_2: ProteinChain, pairs: list[tuple[int | None, int | None]]
+    chn_1: ProteinChain, chn_2: ProteinChain, pairs: tuple[tuple[int | None, int | None], ...]
 ) -> tuple[list[int], list[int]]:
     """Helper to extract aligned residue indices from sequence alignment pairs.
 
     Args:
         chn_1: First ProteinChain
         chn_2: Second ProteinChain
-        pairs: List of (idx1, idx2) from align_sequences
+        pairs: Tuple of (idx1, idx2) from align_sequences
 
     Returns:
         Tuple of (list of indices in chn_1, list of indices in chn_2)

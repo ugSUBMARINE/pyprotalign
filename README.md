@@ -504,4 +504,4 @@ Contributions are welcome! Please open an issue or submit a pull request on GitH
 
 ## Acknowledgements
 
-Thanks to the developers of `gemmi` for their excellent library. Coding was supported by `warp.dev`.
+Thanks to the developers of `gemmi` for their excellent library. Coding was supported by `warp.dev` and `codex`.

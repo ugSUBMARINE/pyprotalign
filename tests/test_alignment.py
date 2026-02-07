@@ -16,7 +16,7 @@ class TestAlignSequences:
         seq2 = "ACDEFG"
         pairs = align_sequences(seq1, seq2)
 
-        expected = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]
+        expected = ((0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5))
         assert pairs == expected
 
     def test_single_mismatch(self) -> None:
@@ -26,7 +26,7 @@ class TestAlignSequences:
         pairs = align_sequences(seq1, seq2)
 
         # Should align with mismatch at position 3
-        expected = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]
+        expected = ((0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5))
         assert pairs == expected
 
     def test_gap_in_target(self) -> None:
@@ -36,7 +36,7 @@ class TestAlignSequences:
         pairs = align_sequences(seq1, seq2)
 
         # seq1 longer, should have gap in seq2 at end
-        expected = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, None)]
+        expected = ((0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, None))
         assert pairs == expected
 
     def test_gap_in_query(self) -> None:
@@ -59,7 +59,7 @@ class TestAlignSequences:
         pairs = align_sequences(seq1, seq2)
 
         # Should still align length 3, all mismatches
-        expected = [(0, 0), (1, 1), (2, 2)]
+        expected = ((0, 0), (1, 1), (2, 2))
         assert pairs == expected
 
     def test_single_residue_each(self) -> None:
@@ -68,7 +68,7 @@ class TestAlignSequences:
         seq2 = "A"
         pairs = align_sequences(seq1, seq2)
 
-        expected = [(0, 0)]
+        expected = ((0, 0),)
         assert pairs == expected
 
     def test_empty_alignment_length(self) -> None:

@@ -20,7 +20,7 @@ class TestBioAlignSequences:
         seq1 = "ACDEFG"
         seq2 = "ACDEFG"
         pairs = align_sequences(seq1, seq2)
-        expected = [(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5)]
+        expected = ((0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5))
         assert pairs == expected
 
     def test_gap_coverage(self) -> None:
