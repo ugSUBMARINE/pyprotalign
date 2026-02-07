@@ -71,6 +71,29 @@ uv run protalign reference.cif *.cif --output aligned
 uv run protalign reference.cif *.cif --quaternary --output aligned
 ```
 
+### All-to-All Chain Alignment
+
+The `protalign-all2all` CLI aligns every extracted protein chain against all others, across one or more structures.
+With multiple input files, chain IDs are prefixed with the file stem (e.g., `9ebk_A`).
+
+```bash
+# Table output to screen (default)
+uv run protalign-all2all 9ebk.cif 9jn4.cif
+
+# CSV output to a file (default name: all2all.csv for multiple inputs)
+uv run protalign-all2all 9ebk.cif 9jn4.cif --format csv
+
+# Custom CSV filename
+uv run protalign-all2all 9ebk.cif 9jn4.cif --format csv --output pairs.csv
+
+# Tighten filters
+uv run protalign-all2all 9ebk.cif 9jn4.cif --min-aligned 50 --max-rmsd 5.0
+```
+
+Notes:
+- Table output prints to stdout; CSV output always writes to a file.
+- Pairs below `--min-aligned` or above `--max-rmsd` are still reported with `NaN` and a `status` in CSV.
+
 Batch mode:
 - Activated when multiple mobile files provided
 - Outputs `<stem>_<suffix>.<ext>` for each mobile file (extension comes from `--output`, defaults to `.cif`)
@@ -427,6 +450,30 @@ Fixed:  chain D, 212 residues
 Mobile: chain A, 219 residues
 Aligned 211 CA pairs with RMSD 1.359 Å
 Superposed structure written to: 9ebk_aligned.cif
+```
+
+**All-to-all chains alignment:**
+```bash
+$ uv run protalign-all2all 9jn4.cif
+```
+
+```
+=== All-to-All Chain Alignment ===
+
+Loaded structure: 9jn4.cif
+Found 4 protein chain(s) total.
+
+
+Chain 1    Chain 2    Aligned    RMSD (Å)   Status          
+----------------------------------------------------------
+A          B          213        0.251                      
+A          C          212        0.305                      
+A          D          212        0.298                      
+B          C          212        0.350                      
+B          D          212        0.336                      
+C          D          212        0.139                      
+
+Total pairs aligned: 6 (of 6 total)
 ```
 
 ## Algorithm

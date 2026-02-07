@@ -28,6 +28,7 @@ dependencies = [
 
 [project.scripts]
 protalign = "pyprotalign.cli:main"
+protalign-all2all = "pyprotalign.all_to_all:main"
 
 [project.urls]
 Homepage = "https://github.com/ugSUBMARINE/pyprotalign"
