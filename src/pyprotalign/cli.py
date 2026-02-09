@@ -12,7 +12,7 @@ import numpy as np
 from pyprotalign.chain import ProteinChain
 
 from . import __version__
-from .alignment import align_globally, align_quaternary, align_two_chains
+from .alignment import align_globally, align_hungarian, align_quaternary, align_two_chains
 from .gemmi_utils import (
     apply_transformation,
     generate_conflict_free_chain_map,
@@ -140,6 +140,12 @@ def _parse_args() -> argparse.Namespace:
         help="Rename mobile chains to match fixed (only with --quaternary)",
     )
     parser.add_argument(
+        "--match",
+        choices=["hungarian", "greedy"],
+        default=None,
+        help="Chain matching algorithm for quaternary mode (default: greedy)",
+    )
+    parser.add_argument(
         "--verbose",
         action="store_true",
         help="Enable verbose output (show refinement cycles, chain matching details)",
@@ -159,6 +165,10 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--by-order can only be used with --global")
     if args.rename_chains and not args.quaternary:
         parser.error("--rename-chains can only be used with --quaternary")
+    if args.match is not None and not args.quaternary:
+        parser.error("--match can only be used with --quaternary")
+
+    args.match = args.match or "greedy"
 
     return args
 
@@ -241,7 +251,8 @@ def _align_quaternary(
     except ValueError as e:
         raise ValueError(f"Mobile structure has no protein chains: {e}") from e
 
-    rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
+    align_fn = align_hungarian if args.match == "hungarian" else align_quaternary
+    rotation, translation, rmsd, num_aligned, chain_mapping = align_fn(
         fixed_chains,
         mobile_chains,
         fixed_seed=args.fixed_chain,

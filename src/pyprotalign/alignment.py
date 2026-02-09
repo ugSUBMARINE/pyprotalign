@@ -423,6 +423,108 @@ def align_quaternary(
     return rotation, translation, rmsd, num_aligned, chain_mapping
 
 
+def align_hungarian(
+    fixed_chains: list[ProteinChain],
+    mobile_chains: list[ProteinChain],
+    fixed_seed: str | None = None,
+    mobile_seed: str | None = None,
+    distance_threshold: float = 8.0,
+    refine: bool = False,
+    cutoff_factor: float = 2.0,
+    max_cycles: int = 5,
+    filter: bool = False,
+    min_bfactor: float = -np.inf,
+    max_bfactor: float = np.inf,
+    min_occ: float = -np.inf,
+) -> tuple[np.ndarray, np.ndarray, float, int, dict[str, str]]:
+    """Quaternary structure alignment using Hungarian chain matching.
+
+    This follows the same flow as :func:`align_quaternary`:
+    1. Align one seed chain pair to obtain an initial rigid-body transform.
+    2. Transform mobile chain centers into the fixed reference frame.
+    3. Build one-to-one chain mapping using global minimum-cost assignment.
+    4. Recompute final transform from pooled coordinates across mapped chains.
+    """
+    if len(fixed_chains) == 0:
+        raise ValueError("No fixed chains provided.")
+    if len(mobile_chains) == 0:
+        raise ValueError("No mobile chains provided.")
+
+    debug_enabled = logger.isEnabledFor(logging.DEBUG)
+
+    fixed_chain_map = {chn.chain_id: chn for chn in fixed_chains}
+    mobile_chain_map = {chn.chain_id: chn for chn in mobile_chains}
+    if fixed_seed and fixed_seed not in fixed_chain_map:
+        available = ", ".join(sorted(fixed_chain_map)) or "none"
+        raise ValueError(f"Fixed seed chain '{fixed_seed}' not found. Available chains: {available}")
+    if mobile_seed and mobile_seed not in mobile_chain_map:
+        available = ", ".join(sorted(mobile_chain_map)) or "none"
+        raise ValueError(f"Mobile seed chain '{mobile_seed}' not found. Available chains: {available}")
+    fixed_chain = fixed_chain_map[fixed_seed] if fixed_seed else fixed_chains[0]
+    mobile_chain = mobile_chain_map[mobile_seed] if mobile_seed else mobile_chains[0]
+
+    if debug_enabled:
+        logger.debug("-- Seed alignment: %s -> %s --", fixed_chain.chain_id, mobile_chain.chain_id)
+
+    rotation, translation, rmsd, num_aligned = align_two_chains(
+        fixed_chain,
+        mobile_chain,
+        refine,
+        cutoff_factor,
+        max_cycles,
+        filter,
+        min_bfactor,
+        max_bfactor,
+        min_occ,
+    )
+
+    if debug_enabled:
+        logger.debug("Aligned %d CA pairs with RMSD %.3f A", num_aligned, rmsd)
+
+    fixed_centers = np.array([np.nanmean(chn.coords, axis=0) for chn in fixed_chains], dtype=float)
+    mobile_centers = (
+        np.array([np.nanmean(chn.coords, axis=0) for chn in mobile_chains], dtype=float) @ rotation.T + translation
+    )
+    distances = np.sqrt(np.sum((fixed_centers[:, np.newaxis, :] - mobile_centers[np.newaxis, :, :]) ** 2, axis=-1))
+
+    if debug_enabled:
+        logger.debug("\n-- Chain center distances after seed alignment. --")
+        for i, row in enumerate(distances):
+            for j, distance in enumerate(row):
+                status = "ok" if distance <= distance_threshold else "skip"
+                logger.debug(
+                    "  %s <-> %s: %.2f A (%s)",
+                    fixed_chains[i].chain_id,
+                    mobile_chains[j].chain_id,
+                    distance,
+                    status,
+                )
+        logger.debug("")
+
+    matched_idx = _match_chain_centers_hungarian(distances, distance_threshold)
+    chain_mapping = {fixed_chains[i].chain_id: mobile_chains[j].chain_id for i, j in matched_idx}
+
+    logger.info(
+        "Chain mapping after seed alignment (Hungarian): %s",
+        ", ".join([f"{chn_id_1} -> {chn_id_2}" for chn_id_1, chn_id_2 in chain_mapping.items()]),
+    )
+
+    rotation, translation, rmsd, num_aligned = align_mapped_chains(
+        fixed_chain_map,
+        mobile_chain_map,
+        chain_mapping,
+        refine,
+        cutoff_factor,
+        max_cycles,
+        filter,
+        min_bfactor,
+        max_bfactor,
+        min_occ,
+    )
+
+    return rotation, translation, rmsd, num_aligned, chain_mapping
+
+
 def _match_chain_centers(distances: NDArray[np.floating], distance_threshold: float) -> list[tuple[int, int]]:
     """Greedy one-to-one chain matching based on center distances within a threshold."""
     masked = distances.copy()
@@ -448,5 +550,130 @@ def _match_chain_centers(distances: NDArray[np.floating], distance_threshold: fl
         pairs.append((i, j))
         used_fixed[i] = True
         used_mobile[j] = True
+
+    return pairs
+
+
+def _hungarian_minimize(cost: NDArray[np.floating]) -> list[tuple[int, int]]:
+    """Compute minimum-cost assignment using the Hungarian algorithm.
+
+    Args:
+        cost: Cost matrix of shape (n_rows, n_cols). All values must be finite.
+
+    Returns:
+        List of (row_index, col_index) assignments. One assignment per row.
+    """
+    n_rows, n_cols = cost.shape
+    if n_rows == 0 or n_cols == 0:
+        return []
+
+    transposed = False
+    work_cost = cost
+    if n_rows > n_cols:
+        work_cost = cost.T
+        n_rows, n_cols = work_cost.shape
+        transposed = True
+
+    if not np.all(np.isfinite(work_cost)):
+        raise ValueError("Hungarian algorithm requires finite costs.")
+
+    u = np.zeros(n_rows + 1, dtype=float)
+    v = np.zeros(n_cols + 1, dtype=float)
+    p = np.zeros(n_cols + 1, dtype=int)
+    way = np.zeros(n_cols + 1, dtype=int)
+
+    for i in range(1, n_rows + 1):
+        p[0] = i
+        j0 = 0
+        minv = np.full(n_cols + 1, np.inf, dtype=float)
+        used = np.zeros(n_cols + 1, dtype=bool)
+        while True:
+            used[j0] = True
+            i0 = p[j0]
+            delta = np.inf
+            j1 = 0
+            for j in range(1, n_cols + 1):
+                if used[j]:
+                    continue
+                cur = work_cost[i0 - 1, j - 1] - u[i0] - v[j]
+                if cur < minv[j]:
+                    minv[j] = cur
+                    way[j] = j0
+                if minv[j] < delta:
+                    delta = minv[j]
+                    j1 = j
+
+            for j in range(n_cols + 1):
+                if used[j]:
+                    u[p[j]] += delta
+                    v[j] -= delta
+                else:
+                    minv[j] -= delta
+
+            j0 = j1
+            if p[j0] == 0:
+                break
+
+        while True:
+            j1 = way[j0]
+            p[j0] = p[j1]
+            j0 = j1
+            if j0 == 0:
+                break
+
+    assignment: list[tuple[int, int]] = []
+    for j in range(1, n_cols + 1):
+        if p[j] != 0:
+            row_idx = p[j] - 1
+            col_idx = j - 1
+            if transposed:
+                assignment.append((col_idx, row_idx))
+            else:
+                assignment.append((row_idx, col_idx))
+
+    assignment.sort(key=lambda x: x[0])
+    return assignment
+
+
+def _match_chain_centers_hungarian(distances: NDArray[np.floating], distance_threshold: float) -> list[tuple[int, int]]:
+    """Threshold-aware global chain matching using the Hungarian algorithm."""
+    valid_mask = np.isfinite(distances) & (distances <= distance_threshold)
+    if not valid_mask.any():
+        raise ValueError(
+            f"No matching chains found. Adjust distance threshold (current value: {distance_threshold:.2f} A)."
+        )
+
+    n_fixed, n_mobile = distances.shape
+    n_total = n_fixed + n_mobile
+
+    valid_distances = distances[valid_mask]
+    max_valid = float(np.max(valid_distances))
+    penalty = max(distance_threshold + 1.0, max_valid + 1.0)
+    invalid_cost = penalty * 100.0
+
+    cost = np.zeros((n_total, n_total), dtype=float)
+    real_block = np.where(valid_mask, distances, invalid_cost)
+    cost[:n_fixed, :n_mobile] = real_block
+
+    # Costs for matching real chains to dummy slots (unmatched).
+    cost[:n_fixed, n_mobile:] = penalty
+    cost[n_fixed:, :n_mobile] = penalty
+    cost[n_fixed:, n_mobile:] = 0.0
+
+    assignment = _hungarian_minimize(cost)
+
+    pairs: list[tuple[int, int]] = []
+    for fixed_idx, col_idx in assignment:
+        if fixed_idx >= n_fixed:
+            continue
+        if col_idx >= n_mobile:
+            continue
+        if valid_mask[fixed_idx, col_idx]:
+            pairs.append((fixed_idx, col_idx))
+
+    if len(pairs) == 0:
+        raise ValueError(
+            f"No matching chains found. Adjust distance threshold (current value: {distance_threshold:.2f} A)."
+        )
 
     return pairs

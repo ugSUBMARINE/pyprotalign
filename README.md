@@ -11,7 +11,7 @@ Protein structure superposition using sequence alignment and iterative refinemen
 - **Multi-chain support**:
   - Single-chain alignment with specified or default chains
   - Global alignment of all matching chains (by ID or by order)
-  - Quaternary alignment with smart chain matching by proximity
+  - Quaternary alignment with selectable chain matching (`--match greedy|hungarian`)
 - **Batch processing**: Align multiple mobile structures to a single reference
 
 ## Installation
@@ -51,6 +51,9 @@ uv run protalign fixed.cif mobile.cif --quaternary --distance-threshold 8.0
 
 # Quaternary alignment with chain renaming
 uv run protalign fixed.cif mobile.cif --quaternary --rename-chains
+
+# Quaternary alignment with Hungarian matching
+uv run protalign fixed.cif mobile.cif --quaternary --match hungarian
 
 # With iterative refinement (reject outliers)
 uv run protalign fixed.cif mobile.cif --refine --cutoff 2.0 --cycles 5
@@ -107,7 +110,7 @@ usage: protalign [-h] [--version] [-o OUTPUT] [--fixed-chain FIXED_CHAIN] [--mob
                  [--filter] [--min-bfac MIN_BFAC] [--max-bfac MAX_BFAC] [--min-occ MIN_OCC]
                  [--refine] [--cycles CYCLES] [--cutoff CUTOFF]
                  [--global] [--by-order]
-                 [--quaternary] [--distance-threshold DISTANCE_THRESHOLD] [--rename-chains]
+                 [--quaternary] [--distance-threshold DISTANCE_THRESHOLD] [--rename-chains] [--match {hungarian,greedy}]
                  [--verbose]
                  fixed mobile [mobile ...]
 
@@ -138,6 +141,8 @@ options:
   --distance-threshold DISTANCE_THRESHOLD
                         Distance threshold (Å) for chain matching in quaternary mode (default: 8.0)
   --rename-chains       Rename mobile chains to match fixed (only with --quaternary)
+  --match {hungarian,greedy}
+                        Chain matching algorithm for quaternary mode (default: greedy)
   --verbose             Enable verbose output (show refinement cycles, chain matching details)
   ```
 
@@ -503,7 +508,7 @@ Total pairs aligned: 6 (of 6 total)
 ### Quaternary mode (`--quaternary`)
 1. **Load structures**: Reads PDB or mmCIF files
 2. **Seed alignment**: Aligns specified or first chain pair with optional quality filtering and refinement
-3. **Proximity matching**: Transforms mobile copy, matches remaining chains by distance between chain centers
+3. **Chain matching**: Transforms mobile chains centers, then matches chains by center distance using `--match greedy` (default) or `--match hungarian`
 4. **Pool coordinates**: Sequence aligns all matched chain pairs, pools CA atoms
 5. **Quality filtering** (optional): Filters CA atom pairs per chain by B-factor and occupancy
 6. **Final transformation**: Computes transformation on pooled coords with optional refinement

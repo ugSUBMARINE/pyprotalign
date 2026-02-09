@@ -1,9 +1,16 @@
 """Tests for sequence alignment operations."""
 
 import gemmi
+import numpy as np
 import pytest
 
-from pyprotalign.alignment import align_globally, align_quaternary
+from pyprotalign.alignment import (
+    _match_chain_centers,
+    _match_chain_centers_hungarian,
+    align_globally,
+    align_hungarian,
+    align_quaternary,
+)
 from pyprotalign.gemmi_utils import align_sequences, get_all_protein_chains
 
 
@@ -413,9 +420,134 @@ class TestAlignQuaternary:
         assert len(chain_mapping) == 1
         assert chain_mapping == {"A": "A"}
 
+
+class TestAlignHungarian:
+    """Tests for align_hungarian function and Hungarian chain matching helper."""
+
+    def _create_chain(
+        self,
+        name: str,
+        sequence: str,
+        offset: tuple[float, float, float] = (0.0, 0.0, 0.0),
+        missing_ca_indices: set[int] | None = None,
+    ) -> gemmi.Chain:
+        chain = gemmi.Chain(name)
+        missing = missing_ca_indices or set()
+        residues = sequence.split()
+        for i, res_name in enumerate(residues):
+            res = gemmi.Residue()
+            res.name = res_name
+            res.seqid = gemmi.SeqId(str(i + 1))
+            res.entity_type = gemmi.EntityType.Polymer
+            if i not in missing:
+                atom = gemmi.Atom()
+                atom.name = "CA"
+                atom.element = gemmi.Element("C")
+                atom.pos = gemmi.Position(float(i) + offset[0], offset[1], offset[2])
+                res.add_atom(atom)
+            chain.add_residue(res)
+        return chain
+
+    def _create_structure(
+        self, chains: list[tuple[str, str, tuple[float, float, float], set[int] | None]]
+    ) -> gemmi.Structure:
+        structure = gemmi.Structure()
+        model = gemmi.Model(1)
+        for chain_name, sequence, offset, missing_ca in chains:
+            chain = self._create_chain(chain_name, sequence, offset, missing_ca)
+            model.add_chain(chain)
+        structure.add_model(model)
+        structure.setup_entities()
+        return structure
+
+    def test_permuted_labels(self) -> None:
+        fixed_st = self._create_structure(
+            [
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU", (0.0, 10.0, 0.0), None),
+            ]
+        )
+        mobile_st = self._create_structure(
+            [
+                ("C", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("D", "THR VAL LEU", (0.0, 10.0, 0.0), None),
+            ]
+        )
+
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_hungarian(
+            fixed_chains, mobile_chains, distance_threshold=15.0
+        )
+
+        assert chain_mapping == {"A": "C", "B": "D"}
+        assert num_aligned == 6
+        assert rmsd < 1e-6
+
+    def test_threshold_filters(self) -> None:
+        fixed_st = self._create_structure(
+            [
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU", (0.0, 10.0, 0.0), None),
+            ]
+        )
+        mobile_st = self._create_structure(
+            [
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("C", "THR VAL LEU", (0.0, -10.0, 0.0), None),
+            ]
+        )
+
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_hungarian(
+            fixed_chains,
+            mobile_chains,
+            distance_threshold=5.0,
+        )
+
+        assert chain_mapping == {"A": "A"}
+        assert num_aligned == 3
+        assert rmsd < 1e-6
+
+    def test_invalid_seed_chain(self) -> None:
+        fixed_st = self._create_structure([("A", "ALA GLY SER", (0.0, 0.0, 0.0), None)])
+        mobile_st = self._create_structure([("B", "ALA GLY SER", (0.0, 0.0, 0.0), None)])
+
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+
+        with pytest.raises(ValueError, match="Fixed seed chain 'Z' not found"):
+            align_hungarian(fixed_chains, mobile_chains, fixed_seed="Z")
+
+    def test_hungarian_finds_better_mapping_than_greedy(self) -> None:
+        distances = np.array(
+            [
+                [1.0, 2.0],
+                [1.1, 100.0],
+            ],
+            dtype=float,
+        )
+
+        greedy_pairs = _match_chain_centers(distances, distance_threshold=200.0)
+        hungarian_pairs = _match_chain_centers_hungarian(distances, distance_threshold=200.0)
+
+        assert greedy_pairs == [(0, 0), (1, 1)]
+        assert hungarian_pairs == [(0, 1), (1, 0)]
+
+        greedy_cost = float(sum(distances[i, j] for i, j in greedy_pairs))
+        hungarian_cost = float(sum(distances[i, j] for i, j in hungarian_pairs))
+        assert hungarian_cost < greedy_cost
+
+    def test_hungarian_no_matches_with_small_threshold(self) -> None:
+        distances = np.array([[10.0, 12.0], [11.0, 13.0]], dtype=float)
+        with pytest.raises(ValueError, match="No matching chains found"):
+            _match_chain_centers_hungarian(distances, distance_threshold=5.0)
+
     def test_insufficient_pairs_error(self) -> None:
-        """Test error when seed chains have too few aligned pairs."""
-        # Only 2 residues in seed - not enough
+        """Test error when Hungarian seed chains have too few aligned pairs."""
         fixed_st = self._create_structure([("A", "ALA GLY", (0.0, 0.0, 0.0), None)])
         mobile_st = self._create_structure([("A", "ALA GLY", (0.0, 0.0, 0.0), None)])
 
@@ -423,11 +555,10 @@ class TestAlignQuaternary:
         mobile_chains = get_all_protein_chains(mobile_st[0])
 
         with pytest.raises(ValueError, match="Need at least 3 aligned CA pairs"):
-            align_quaternary(fixed_chains, mobile_chains, distance_threshold=10.0)
+            align_hungarian(fixed_chains, mobile_chains, distance_threshold=10.0)
 
     def test_seed_chain_selection(self) -> None:
-        """Test specifying seed chains explicitly."""
-        # Multiple chains, specify B as seed
+        """Test specifying Hungarian seed chains explicitly."""
         fixed_st = self._create_structure(
             [
                 ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
@@ -444,7 +575,7 @@ class TestAlignQuaternary:
         fixed_chains = get_all_protein_chains(fixed_st[0])
         mobile_chains = get_all_protein_chains(mobile_st[0])
 
-        rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_hungarian(
             fixed_chains, mobile_chains, distance_threshold=15.0, fixed_seed="B", mobile_seed="Y"
         )
 
@@ -453,7 +584,7 @@ class TestAlignQuaternary:
         assert len(chain_mapping) == 2
 
     def test_quaternary_skips_chains_without_ca(self) -> None:
-        """Test that chains without CA atoms are skipped in matching."""
+        """Test that Hungarian matching skips chains without CA atoms."""
         fixed_st = self._create_structure(
             [
                 ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
@@ -470,7 +601,7 @@ class TestAlignQuaternary:
         fixed_chains = get_all_protein_chains(fixed_st[0])
         mobile_chains = get_all_protein_chains(mobile_st[0])
 
-        rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
+        rotation, translation, rmsd, num_aligned, chain_mapping = align_hungarian(
             fixed_chains, mobile_chains, distance_threshold=15.0
         )
 
