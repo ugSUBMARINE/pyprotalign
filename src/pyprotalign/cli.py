@@ -155,6 +155,10 @@ def _parse_args() -> argparse.Namespace:
 
     if args.filter and (args.min_bfac > args.max_bfac):
         parser.error("--min-bfac cannot be greater than --max-bfac")
+    if args.cycles < 1:
+        parser.error("--cycles must be >= 1")
+    if args.cutoff <= 0:
+        parser.error("--cutoff must be > 0")
 
     # Validate mutual exclusivity
     if args.global_mode and args.quaternary:
