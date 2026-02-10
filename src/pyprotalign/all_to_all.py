@@ -271,25 +271,42 @@ def main() -> int:
             output_path = Path("all2all.csv")
         with output_path.open("w", encoding="utf-8") as handle:
             handle.write("chain_1,chain_2,num_aligned,rmsd,status\n")
-            for chain_id_i, chain_id_j, num_aligned, rmsd, status in results:
-                if num_aligned is None or rmsd is None:
+            for chain_id_i, chain_id_j, _num_aligned, _rmsd, status in results:
+                if _num_aligned is None or _rmsd is None:
                     handle.write(f"{chain_id_i},{chain_id_j},,,{status}\n")
                 else:
-                    handle.write(f"{chain_id_i},{chain_id_j},{num_aligned},{rmsd:.3f},{status}\n")
+                    handle.write(f"{chain_id_i},{chain_id_j},{_num_aligned},{_rmsd:.3f},{status}\n")
         logger.info("Wrote CSV output: %s\n", output_path)
     else:
         logger.info("")
         # Table format
-        print(f"{'Chain 1':<10} {'Chain 2':<10} {'Aligned':<10} {'RMSD (Å)':<10} {'Status':<16}")
-        print("-" * 58)
-        for chain_id_i, chain_id_j, num_aligned, rmsd, _status in results:
-            aligned_str = "---" if num_aligned is None else str(num_aligned)
-            rmsd_str = "---" if rmsd is None else f"{rmsd:.3f}"
+        rows: list[tuple[str, str, str, str, str]] = []
+        for chain_id_i, chain_id_j, _num_aligned, _rmsd, _status in results:
+            aligned_str = "---" if _num_aligned is None else str(_num_aligned)
+            rmsd_str = "---" if _rmsd is None else f"{_rmsd:.3f}"
             status_str = "" if _status == "ok" else _status
-            print(f"{chain_id_i:<10} {chain_id_j:<10} {aligned_str:<10} {rmsd_str:<10} {status_str:<16}")
+            rows.append((chain_id_i, chain_id_j, aligned_str, rmsd_str, status_str))
+
+        chain_1_width = max(len("Chain 1"), *(len(row[0]) for row in rows))
+        chain_2_width = max(len("Chain 2"), *(len(row[1]) for row in rows))
+        aligned_width = max(len("Aligned"), *(len(row[2]) for row in rows))
+        rmsd_width = max(len("RMSD (Å)"), *(len(row[3]) for row in rows))
+        status_width = max(len("Status"), *(len(row[4]) for row in rows))
+
+        header = (
+            f"{'Chain 1':<{chain_1_width}} {'Chain 2':<{chain_2_width}} "
+            f"{'Aligned':<{aligned_width}} {'RMSD (Å)':<{rmsd_width}} {'Status':<{status_width}}"
+        )
+        print(header)
+        print("-" * len(header))
+        for chain_id_i, chain_id_j, aligned_str, rmsd_str, status_str in rows:
+            print(
+                f"{chain_id_i:<{chain_1_width}} {chain_id_j:<{chain_2_width}} "
+                f"{aligned_str:<{aligned_width}} {rmsd_str:<{rmsd_width}} {status_str:<{status_width}}"
+            )
 
     total_aligned = sum(
-        1 for _, _, num_aligned, rmsd, _status in results if num_aligned is not None and rmsd is not None
+        1 for _, _, _num_aligned, _rmsd, _status in results if _num_aligned is not None and _rmsd is not None
     )
     logger.info("\nTotal pairs aligned: %d (of %d total)\n", total_aligned, len(results))
     return 0
