@@ -9,8 +9,10 @@ from pathlib import Path
 import numpy as np
 
 from . import __version__
-from .alignment import align_two_chains
+from .alignment import align_two_chains, collect_aligned_pair_coords, collect_quality_mask_for_pair
+from .chain import ProteinChain
 from .gemmi_utils import align_sequences, get_all_protein_chains, load_structure
+from .metrics import gdt_ha, gdt_ts, tm_score
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +111,12 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose output",
     )
+    parser.add_argument(
+        "--score-scope",
+        choices=["mapped", "filtered", "refined"],
+        default="mapped",
+        help="Residue scope for score calculation (default: mapped)",
+    )
 
     args = parser.parse_args()
 
@@ -126,8 +134,58 @@ def _parse_args() -> argparse.Namespace:
 
     if args.max_rmsd <= 0:
         parser.error("--max-rmsd must be > 0")
+    if args.score_scope == "refined" and not args.refine:
+        parser.error("--score-scope refined requires --refine")
 
     return args
+
+
+def _compute_pair_scores(
+    chain_i: ProteinChain,
+    chain_j: ProteinChain,
+    rotation: np.ndarray,
+    translation: np.ndarray,
+    rmsd: float,
+    cutoff_factor: float,
+    score_scope: str,
+    min_bfac: float,
+    max_bfac: float,
+    min_occ: float,
+    refine_enabled: bool,
+) -> tuple[float, float, float]:
+    fixed_coords, mobile_coords, _, _ = collect_aligned_pair_coords(chain_i, chain_j)
+    mobile_transformed = mobile_coords @ rotation.T + translation
+
+    if score_scope == "filtered":
+        quality_mask = collect_quality_mask_for_pair(
+            chain_i,
+            chain_j,
+            min_bfactor=min_bfac,
+            max_bfactor=max_bfac,
+            min_occ=min_occ,
+        )
+        if np.sum(quality_mask) == 0:
+            raise ValueError("No aligned CA pairs left after quality filtering for score calculation.")
+        fixed_used = fixed_coords[quality_mask]
+        mobile_used = mobile_transformed[quality_mask]
+    elif score_scope == "refined":
+        if not refine_enabled:
+            raise ValueError("Internal error: refined score scope requires refinement.")
+        distances = np.sqrt(np.sum((fixed_coords - mobile_transformed) ** 2, axis=1))
+        mask = distances <= cutoff_factor * rmsd
+        if np.sum(mask) == 0:
+            raise ValueError("No aligned CA pairs left after refined score masking.")
+        fixed_used = fixed_coords[mask]
+        mobile_used = mobile_transformed[mask]
+    else:
+        fixed_used = fixed_coords
+        mobile_used = mobile_transformed
+
+    l_target = len(chain_i.sequence)
+    tm = tm_score(fixed_used, mobile_used, l_target=l_target)
+    gdt_ts_value = gdt_ts(fixed_used, mobile_used, l_target=l_target)
+    gdt_ha_value = gdt_ha(fixed_used, mobile_used, l_target=l_target)
+    return tm, gdt_ts_value, gdt_ha_value
 
 
 def main() -> int:
@@ -180,7 +238,7 @@ def main() -> int:
         return 1
 
     # Perform all-to-all alignment
-    results: list[tuple[str, str, int | None, float | None, str]] = []
+    results: list[tuple[str, str, int | None, float | None, float | None, float | None, float | None, str]] = []
 
     for i in range(len(chains)):
         for j in range(i + 1, len(chains)):
@@ -200,12 +258,12 @@ def main() -> int:
                         num_pairs,
                         args.min_aligned,
                     )
-                results.append((chain_i.chain_id, chain_j.chain_id, None, None, "min_aligned"))
+                results.append((chain_i.chain_id, chain_j.chain_id, None, None, None, None, None, "min_aligned"))
                 continue
 
             # Perform alignment
             try:
-                _, _, rmsd, num_aligned = align_two_chains(
+                rotation, translation, rmsd, num_aligned = align_two_chains(
                     chain_i,
                     chain_j,
                     refine=args.refine,
@@ -225,7 +283,7 @@ def main() -> int:
                             num_aligned,
                             args.min_aligned,
                         )
-                    results.append((chain_i.chain_id, chain_j.chain_id, None, None, "min_aligned"))
+                    results.append((chain_i.chain_id, chain_j.chain_id, None, None, None, None, None, "min_aligned"))
                     continue
                 if rmsd > args.max_rmsd:
                     if logger.isEnabledFor(logging.DEBUG):
@@ -236,23 +294,51 @@ def main() -> int:
                             rmsd,
                             args.max_rmsd,
                         )
-                    results.append((chain_i.chain_id, chain_j.chain_id, None, None, "max_rmsd"))
+                    results.append((chain_i.chain_id, chain_j.chain_id, None, None, None, None, None, "max_rmsd"))
                     continue
 
-                results.append((chain_i.chain_id, chain_j.chain_id, num_aligned, rmsd, "ok"))
+                tm, gdt_ts_value, gdt_ha_value = _compute_pair_scores(
+                    chain_i,
+                    chain_j,
+                    rotation,
+                    translation,
+                    rmsd,
+                    cutoff_factor=args.cutoff,
+                    score_scope=args.score_scope,
+                    min_bfac=args.min_bfac,
+                    max_bfac=args.max_bfac,
+                    min_occ=args.min_occ,
+                    refine_enabled=args.refine,
+                )
 
-                if logger.isEnabledFor(logging.DEBUG):
-                    logger.debug(
-                        "Aligned %s vs %s: %d residues, RMSD %.3f Å",
+                results.append(
+                    (
                         chain_i.chain_id,
                         chain_j.chain_id,
                         num_aligned,
                         rmsd,
+                        tm,
+                        gdt_ts_value,
+                        gdt_ha_value,
+                        "ok",
+                    )
+                )
+
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Aligned %s vs %s: %d residues, RMSD %.3f Å, TM %.4f, GDT-TS %.4f, GDT-HA %.4f",
+                        chain_i.chain_id,
+                        chain_j.chain_id,
+                        num_aligned,
+                        rmsd,
+                        tm,
+                        gdt_ts_value,
+                        gdt_ha_value,
                     )
 
             except Exception as e:
                 logger.warning("Failed to align %s vs %s: %s", chain_i.chain_id, chain_j.chain_id, e)
-                results.append((chain_i.chain_id, chain_j.chain_id, None, None, "error"))
+                results.append((chain_i.chain_id, chain_j.chain_id, None, None, None, None, None, "error"))
                 continue
 
     # Output results
@@ -270,43 +356,55 @@ def main() -> int:
         else:
             output_path = Path("all2all.csv")
         with output_path.open("w", encoding="utf-8") as handle:
-            handle.write("chain_1,chain_2,num_aligned,rmsd,status\n")
-            for chain_id_i, chain_id_j, _num_aligned, _rmsd, status in results:
-                if _num_aligned is None or _rmsd is None:
-                    handle.write(f"{chain_id_i},{chain_id_j},,,{status}\n")
+            handle.write("chain_1,chain_2,num_aligned,rmsd,tm,gdt_ts,gdt_ha,status\n")
+            for chain_id_i, chain_id_j, _num_aligned, _rmsd, _tm, _gdt_ts, _gdt_ha, status in results:
+                if _num_aligned is None or _rmsd is None or _tm is None or _gdt_ts is None or _gdt_ha is None:
+                    handle.write(f"{chain_id_i},{chain_id_j},,,,,,{status}\n")
                 else:
-                    handle.write(f"{chain_id_i},{chain_id_j},{_num_aligned},{_rmsd:.3f},{status}\n")
+                    handle.write(
+                        f"{chain_id_i},{chain_id_j},{_num_aligned},{_rmsd:.3f},{_tm:.4f},{_gdt_ts:.4f},{_gdt_ha:.4f},{status}\n"
+                    )
         logger.info("Wrote CSV output: %s\n", output_path)
     else:
         logger.info("")
         # Table format
-        rows: list[tuple[str, str, str, str, str]] = []
-        for chain_id_i, chain_id_j, _num_aligned, _rmsd, _status in results:
+        rows: list[tuple[str, str, str, str, str, str, str, str]] = []
+        for chain_id_i, chain_id_j, _num_aligned, _rmsd, _tm, _gdt_ts, _gdt_ha, _status in results:
             aligned_str = "---" if _num_aligned is None else str(_num_aligned)
             rmsd_str = "---" if _rmsd is None else f"{_rmsd:.3f}"
+            tm_str = "---" if _tm is None else f"{_tm:.4f}"
+            gdt_ts_str = "---" if _gdt_ts is None else f"{_gdt_ts:.4f}"
+            gdt_ha_str = "---" if _gdt_ha is None else f"{_gdt_ha:.4f}"
             status_str = "" if _status == "ok" else _status
-            rows.append((chain_id_i, chain_id_j, aligned_str, rmsd_str, status_str))
+            rows.append((chain_id_i, chain_id_j, aligned_str, rmsd_str, tm_str, gdt_ts_str, gdt_ha_str, status_str))
 
         chain_1_width = max(len("Chain 1"), *(len(row[0]) for row in rows))
         chain_2_width = max(len("Chain 2"), *(len(row[1]) for row in rows))
         aligned_width = max(len("Aligned"), *(len(row[2]) for row in rows))
         rmsd_width = max(len("RMSD (Å)"), *(len(row[3]) for row in rows))
-        status_width = max(len("Status"), *(len(row[4]) for row in rows))
+        tm_width = max(len("TM"), *(len(row[4]) for row in rows))
+        gdt_ts_width = max(len("GDT-TS"), *(len(row[5]) for row in rows))
+        gdt_ha_width = max(len("GDT-HA"), *(len(row[6]) for row in rows))
+        status_width = max(len("Status"), *(len(row[7]) for row in rows))
 
         header = (
             f"{'Chain 1':<{chain_1_width}} {'Chain 2':<{chain_2_width}} "
-            f"{'Aligned':<{aligned_width}} {'RMSD (Å)':<{rmsd_width}} {'Status':<{status_width}}"
+            f"{'Aligned':<{aligned_width}} {'RMSD (Å)':<{rmsd_width}} {'TM':<{tm_width}} "
+            f"{'GDT-TS':<{gdt_ts_width}} {'GDT-HA':<{gdt_ha_width}} {'Status':<{status_width}}"
         )
         print(header)
         print("-" * len(header))
-        for chain_id_i, chain_id_j, aligned_str, rmsd_str, status_str in rows:
+        for chain_id_i, chain_id_j, aligned_str, rmsd_str, tm_str, gdt_ts_str, gdt_ha_str, status_str in rows:
             print(
                 f"{chain_id_i:<{chain_1_width}} {chain_id_j:<{chain_2_width}} "
-                f"{aligned_str:<{aligned_width}} {rmsd_str:<{rmsd_width}} {status_str:<{status_width}}"
+                f"{aligned_str:<{aligned_width}} {rmsd_str:<{rmsd_width}} {tm_str:<{tm_width}} "
+                f"{gdt_ts_str:<{gdt_ts_width}} {gdt_ha_str:<{gdt_ha_width}} {status_str:<{status_width}}"
             )
 
     total_aligned = sum(
-        1 for _, _, _num_aligned, _rmsd, _status in results if _num_aligned is not None and _rmsd is not None
+        1
+        for _, _, _num_aligned, _rmsd, _tm, _gdt_ts, _gdt_ha, _status in results
+        if all(value is not None for value in (_num_aligned, _rmsd, _tm, _gdt_ts, _gdt_ha))
     )
     logger.info("\nTotal pairs aligned: %d (of %d total)\n", total_aligned, len(results))
     return 0

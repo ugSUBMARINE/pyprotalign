@@ -52,18 +52,7 @@ def align_two_chains(
     """
     debug_enabled = logger.isEnabledFor(logging.DEBUG)
 
-    # Align sequences
-    pairs = align_sequences(fixed_chain.sequence, mobile_chain.sequence)
-
-    # Extract aligned residue indices (where both have CA atoms)
-    fixed_indices, mobile_indices = _get_indices_from_pairs(fixed_chain, mobile_chain, pairs)
-
-    if len(fixed_indices) < 3:
-        raise ValueError(f"Need at least 3 aligned CA pairs, found {len(fixed_indices)}")
-
-    # Get coordinates at the aligned indices
-    fixed_coords = fixed_chain.coords[fixed_indices]
-    mobile_coords = mobile_chain.coords[mobile_indices]
+    fixed_coords, mobile_coords, fixed_indices, mobile_indices = collect_aligned_pair_coords(fixed_chain, mobile_chain)
 
     if debug_enabled:
         logger.debug("%d CA pairs after sequence alignment.", len(fixed_coords))
@@ -104,33 +93,81 @@ def align_two_chains(
     return rotation, translation, rmsd, num_aligned
 
 
-def _get_indices_from_pairs(
-    chn_1: ProteinChain, chn_2: ProteinChain, pairs: tuple[tuple[int | None, int | None], ...]
+def collect_aligned_pair_coords(
+    fixed_chain: ProteinChain,
+    mobile_chain: ProteinChain,
+    min_pairs: int = 3,
+) -> tuple[NDArray[np.floating], NDArray[np.floating], list[int], list[int]]:
+    """Collect aligned CA coordinates for one chain pair, before superposition.
+    
+    Args:
+        fixed_chain: Fixed ProteinChain
+        mobile_chain: Mobile ProteinChain
+        min_pairs: Minimum number of aligned CA pairs required (default: 3, set to 0 to skip check)
+    
+    Returns:
+        Tuple of (fixed_coords, mobile_coords, fixed_indices, mobile_indices)
+    
+    Raises:
+        ValueError: If fewer than min_pairs aligned CA pairs and min_pairs > 0
+    """
+    fixed_indices, mobile_indices = _get_aligned_pair_indices(fixed_chain, mobile_chain)
+
+    if min_pairs > 0 and len(fixed_indices) < min_pairs:
+        raise ValueError(f"Need at least {min_pairs} aligned CA pairs, found {len(fixed_indices)}")
+
+    fixed_coords = fixed_chain.coords[fixed_indices]
+    mobile_coords = mobile_chain.coords[mobile_indices]
+
+    return fixed_coords, mobile_coords, fixed_indices, mobile_indices
+
+
+def collect_quality_mask_for_pair(
+    fixed_chain: ProteinChain,
+    mobile_chain: ProteinChain,
+    min_bfactor: float = -np.inf,
+    max_bfactor: float = np.inf,
+    min_occ: float = -np.inf,
+) -> NDArray[np.bool_]:
+    """Collect quality mask for aligned CA coordinates of one chain pair."""
+    fixed_indices, mobile_indices = _get_aligned_pair_indices(fixed_chain, mobile_chain)
+
+    if len(fixed_indices) < 3:
+        raise ValueError(f"Need at least 3 aligned CA pairs, found {len(fixed_indices)}")
+
+    fixed_mask = fixed_chain.get_bfac_occ_mask(min_bfactor, max_bfactor, min_occ, fixed_indices)
+    mobile_mask = mobile_chain.get_bfac_occ_mask(min_bfactor, max_bfactor, min_occ, mobile_indices)
+    return fixed_mask & mobile_mask
+
+
+def _get_aligned_pair_indices(
+    fixed_chain: ProteinChain,
+    mobile_chain: ProteinChain,
 ) -> tuple[list[int], list[int]]:
-    """Helper to extract aligned residue indices from sequence alignment pairs.
+    """Get aligned residue indices for a chain pair with present CA atoms.
 
     Args:
-        chn_1: First ProteinChain
-        chn_2: Second ProteinChain
-        pairs: Tuple of (idx1, idx2) from align_sequences
+        fixed_chain: First ProteinChain
+        mobile_chain: Second ProteinChain
 
     Returns:
-        Tuple of (list of indices in chn_1, list of indices in chn_2)
+        Tuple of (list of indices in fixed_chain, list of indices in mobile_chain)
     """
-    chn_1_indices = []
-    chn_2_indices = []
+    pairs = align_sequences(fixed_chain.sequence, mobile_chain.sequence)
+    fixed_indices = []
+    mobile_indices = []
     for idx_1, idx_2 in pairs:
         # Skip gaps
         if idx_1 is None or idx_2 is None:
             continue
         # Check both residues have CA atoms (not NaN)
-        if np.isnan(chn_1.coords[idx_1, 0]) or np.isnan(chn_2.coords[idx_2, 0]):
+        if np.isnan(fixed_chain.coords[idx_1, 0]) or np.isnan(mobile_chain.coords[idx_2, 0]):
             continue
 
-        chn_1_indices.append(idx_1)
-        chn_2_indices.append(idx_2)
+        fixed_indices.append(idx_1)
+        mobile_indices.append(idx_2)
 
-    return chn_1_indices, chn_2_indices
+    return fixed_indices, mobile_indices
 
 
 def align_globally(
@@ -260,23 +297,17 @@ def align_mapped_chains(
                 chain_id_mobile,
             )
 
-        # Align sequences
-        pairs = align_sequences(fixed_chain.sequence, mobile_chain.sequence)
+        fixed_coords, mobile_coords, fixed_indices, mobile_indices = collect_aligned_pair_coords(
+            fixed_chain, mobile_chain, min_pairs=0
+        )
 
-        # Extract aligned residue indices (where both have CA atoms)
-        fixed_indices, mobile_indices = _get_indices_from_pairs(fixed_chain, mobile_chain, pairs)
-
-        if len(fixed_indices) == 0:
+        if len(fixed_coords) == 0:
             logger.warning(
                 "Mapping %s → %s: No aligned CA pairs. Skipping this pair of chains.",
                 chain_id_fixed,
                 chain_id_mobile,
             )
             continue
-
-        # Get coordinates at the aligned indices
-        fixed_coords = fixed_chain.coords[fixed_indices]
-        mobile_coords = mobile_chain.coords[mobile_indices]
 
         if debug_enabled:
             logger.debug("%d CA pairs after sequence alignment.", len(fixed_coords))
@@ -333,6 +364,66 @@ def align_mapped_chains(
         rmsd = calculate_rmsd(pooled_fixed_coords, mobile_transformed)
 
     return rotation, translation, rmsd, num_aligned
+
+
+def collect_aligned_mapped_coords(
+    fixed_chain_map: dict[str, ProteinChain],
+    mobile_chain_map: dict[str, ProteinChain],
+    chain_mapping: dict[str, str],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Collect aligned CA coordinates for mapped chains, before superposition."""
+    fixed_coords_list = []
+    mobile_coords_list = []
+
+    for chain_id_fixed, chain_id_mobile in chain_mapping.items():
+        fixed_chain = fixed_chain_map[chain_id_fixed]
+        mobile_chain = mobile_chain_map[chain_id_mobile]
+
+        fixed_coords, mobile_coords, _, _ = collect_aligned_pair_coords(fixed_chain, mobile_chain, min_pairs=0)
+
+        fixed_coords_list.append(fixed_coords)
+        mobile_coords_list.append(mobile_coords)
+
+    pooled_fixed_coords = np.vstack(fixed_coords_list) if fixed_coords_list else np.empty((0, 3))
+    pooled_mobile_coords = np.vstack(mobile_coords_list) if mobile_coords_list else np.empty((0, 3))
+
+    if pooled_fixed_coords.shape[0] < 3:
+        raise ValueError(f"Need at least 3 aligned CA pairs after pooling, found {pooled_fixed_coords.shape[0]}")
+
+    return pooled_fixed_coords, pooled_mobile_coords
+
+
+def collect_quality_mask_for_mapped(
+    fixed_chain_map: dict[str, ProteinChain],
+    mobile_chain_map: dict[str, ProteinChain],
+    chain_mapping: dict[str, str],
+    min_bfactor: float = -np.inf,
+    max_bfactor: float = np.inf,
+    min_occ: float = -np.inf,
+) -> NDArray[np.bool_]:
+    """Collect quality mask for pooled aligned CA coordinates across mapped chains."""
+    mask_chunks: list[NDArray[np.bool_]] = []
+
+    for chain_id_fixed, chain_id_mobile in chain_mapping.items():
+        fixed_chain = fixed_chain_map[chain_id_fixed]
+        mobile_chain = mobile_chain_map[chain_id_mobile]
+
+        _, _, fixed_indices, mobile_indices = collect_aligned_pair_coords(fixed_chain, mobile_chain)
+
+        if len(fixed_indices) == 0:
+            continue
+
+        fixed_mask = fixed_chain.get_bfac_occ_mask(min_bfactor, max_bfactor, min_occ, fixed_indices)
+        mobile_mask = mobile_chain.get_bfac_occ_mask(min_bfactor, max_bfactor, min_occ, mobile_indices)
+        mask_chunks.append(fixed_mask & mobile_mask)
+
+    if not mask_chunks:
+        raise ValueError("Need at least 1 aligned CA pair for score masking, found 0")
+
+    mask = np.concatenate(mask_chunks)
+    if mask.shape[0] < 3:
+        raise ValueError(f"Need at least 3 aligned CA pairs for score masking, found {mask.shape[0]}")
+    return mask
 
 
 def align_quaternary(

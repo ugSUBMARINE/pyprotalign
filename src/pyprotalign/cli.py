@@ -12,7 +12,15 @@ import numpy as np
 from pyprotalign.chain import ProteinChain
 
 from . import __version__
-from .alignment import align_globally, align_hungarian, align_quaternary, align_two_chains
+from .alignment import (
+    align_globally,
+    align_hungarian,
+    align_quaternary,
+    align_two_chains,
+    collect_aligned_mapped_coords,
+    collect_aligned_pair_coords,
+    collect_quality_mask_for_mapped,
+)
 from .gemmi_utils import (
     apply_transformation,
     generate_conflict_free_chain_map,
@@ -22,6 +30,7 @@ from .gemmi_utils import (
     rename_chains,
     write_structure,
 )
+from .metrics import gdt_ha, gdt_ts, tm_score
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +159,18 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Enable verbose output (show refinement cycles, chain matching details)",
     )
+    parser.add_argument(
+        "--scores",
+        type=str,
+        default="rmsd",
+        help="Comma-separated scores to report: rmsd,tm,gdt_ts,gdt_ha (default: rmsd)",
+    )
+    parser.add_argument(
+        "--score-scope",
+        choices=["mapped", "filtered", "refined"],
+        default="mapped",
+        help="Residue scope for optional score calculation (default: mapped)",
+    )
 
     args = parser.parse_args()
 
@@ -171,6 +192,22 @@ def _parse_args() -> argparse.Namespace:
         parser.error("--rename-chains can only be used with --quaternary")
     if args.match is not None and not args.quaternary:
         parser.error("--match can only be used with --quaternary")
+    if args.score_scope == "refined" and not args.refine:
+        parser.error("--score-scope refined requires --refine")
+
+    valid_scores = {"rmsd", "tm", "gdt_ts", "gdt_ha"}
+    score_list: list[str] = []
+    for raw_score in args.scores.split(","):
+        score = raw_score.strip().lower()
+        if not score:
+            continue
+        if score not in valid_scores:
+            parser.error(f"Unknown score '{score}'. Valid values: rmsd, tm, gdt_ts, gdt_ha")
+        if score not in score_list:
+            score_list.append(score)
+    if not score_list:
+        parser.error("--scores must contain at least one valid score")
+    args.scores = score_list
 
     args.match = args.match or "greedy"
 
@@ -209,7 +246,7 @@ def _align_two_chains(
 
 def _align_globally(
     fixed_chains_map: dict[str, ProteinChain], mobile_st: gemmi.Structure, args: argparse.Namespace
-) -> tuple[np.ndarray, np.ndarray, float, int]:
+) -> tuple[np.ndarray, np.ndarray, float, int, dict[str, str]]:
     """Align all chains globally and return rotation, translation, RMSD, and number of aligned pairs."""
     try:
         mobile_chains = get_all_protein_chains(mobile_st[0])
@@ -243,7 +280,7 @@ def _align_globally(
     else:
         logger.info("Aligned CA pairs across %d chains: %s", len(chain_mapping), ", ".join(chain_mapping.keys()))
 
-    return rotation, translation, rmsd, num_aligned
+    return rotation, translation, rmsd, num_aligned, chain_mapping
 
 
 def _align_quaternary(
@@ -282,6 +319,58 @@ def _align_quaternary(
     )
 
     return rotation, translation, rmsd, num_aligned, chain_mapping
+
+
+def _compute_scores(
+    fixed_coords: np.ndarray,
+    mobile_coords: np.ndarray,
+    rotation: np.ndarray,
+    translation: np.ndarray,
+    rmsd: float,
+    cutoff_factor: float,
+    selected_scores: list[str],
+    tm_target_length: int,
+    score_scope: str,
+    quality_mask: np.ndarray | None,
+    refine_enabled: bool,
+) -> dict[str, float]:
+    mobile_transformed = mobile_coords @ rotation.T + translation
+    if fixed_coords.shape[0] < 3:
+        raise ValueError(f"Need at least 3 aligned CA pairs for scores, found {fixed_coords.shape[0]}")
+
+    if score_scope == "filtered":
+        if quality_mask is None:
+            raise ValueError("Internal error: filtered score scope requires quality mask.")
+        if quality_mask.shape[0] != fixed_coords.shape[0]:
+            raise ValueError(
+                f"Internal error: quality mask length {quality_mask.shape[0]} does not match aligned pairs "
+                f"{fixed_coords.shape[0]}"
+            )
+        if np.sum(quality_mask) == 0:
+            raise ValueError("No aligned CA pairs left after quality filtering for score calculation.")
+        fixed_used = fixed_coords[quality_mask]
+        mobile_used = mobile_transformed[quality_mask]
+    elif score_scope == "refined":
+        if not refine_enabled:
+            raise ValueError("Internal error: refined score scope requires refinement.")
+        distances = np.sqrt(np.sum((fixed_coords - mobile_transformed) ** 2, axis=1))
+        mask = distances <= cutoff_factor * rmsd
+        if np.sum(mask) == 0:
+            raise ValueError("No aligned CA pairs left after refined score masking.")
+        fixed_used = fixed_coords[mask]
+        mobile_used = mobile_transformed[mask]
+    else:
+        fixed_used = fixed_coords
+        mobile_used = mobile_transformed
+
+    score_values: dict[str, float] = {}
+    if "tm" in selected_scores:
+        score_values["tm"] = tm_score(fixed_used, mobile_used, l_target=tm_target_length)
+    if "gdt_ts" in selected_scores:
+        score_values["gdt_ts"] = gdt_ts(fixed_used, mobile_used, l_target=tm_target_length)
+    if "gdt_ha" in selected_scores:
+        score_values["gdt_ha"] = gdt_ha(fixed_used, mobile_used, l_target=tm_target_length)
+    return score_values
 
 
 def main() -> int:
@@ -358,7 +447,9 @@ def main() -> int:
 
             # Perform the different types of alignment
             if args.global_mode:
-                rotation, translation, rmsd, num_aligned = _align_globally(fixed_chains_map, mobile_st, args)
+                rotation, translation, rmsd, num_aligned, chain_mapping = _align_globally(
+                    fixed_chains_map, mobile_st, args
+                )
             elif args.quaternary:
                 rotation, translation, rmsd, num_aligned, chain_mapping = _align_quaternary(
                     fixed_chains, mobile_st, args
@@ -368,6 +459,83 @@ def main() -> int:
 
             # Apply transformation to mobile structure
             logger.info("Aligned %d CA pairs with RMSD %.3f Å", num_aligned, rmsd)
+
+            if set(args.scores) - {"rmsd"}:
+                quality_mask: np.ndarray | None = None
+                if args.global_mode:
+                    mobile_chains_map = {chain.chain_id: chain for chain in get_all_protein_chains(mobile_st[0])}
+                    fixed_coords, mobile_coords = collect_aligned_mapped_coords(
+                        fixed_chains_map,
+                        mobile_chains_map,
+                        chain_mapping,
+                    )
+                    tm_target_length = sum(len(fixed_chains_map[fixed_id].sequence) for fixed_id in chain_mapping)
+                    if args.score_scope == "filtered":
+                        quality_mask = collect_quality_mask_for_mapped(
+                            fixed_chains_map,
+                            mobile_chains_map,
+                            chain_mapping,
+                            min_bfactor=args.min_bfac,
+                            max_bfactor=args.max_bfac,
+                            min_occ=args.min_occ,
+                        )
+                elif args.quaternary:
+                    fixed_chains_map_local = {chain.chain_id: chain for chain in fixed_chains}
+                    mobile_chains_map = {chain.chain_id: chain for chain in get_all_protein_chains(mobile_st[0])}
+                    fixed_coords, mobile_coords = collect_aligned_mapped_coords(
+                        fixed_chains_map_local,
+                        mobile_chains_map,
+                        chain_mapping,
+                    )
+                    tm_target_length = sum(len(fixed_chains_map_local[fixed_id].sequence) for fixed_id in chain_mapping)
+                    if args.score_scope == "filtered":
+                        quality_mask = collect_quality_mask_for_mapped(
+                            fixed_chains_map_local,
+                            mobile_chains_map,
+                            chain_mapping,
+                            min_bfactor=args.min_bfac,
+                            max_bfactor=args.max_bfac,
+                            min_occ=args.min_occ,
+                        )
+                else:
+                    mobile_chain = get_chain(mobile_st[0], args.mobile_chain)
+                    fixed_coords, mobile_coords, fixed_indices, mobile_indices = collect_aligned_pair_coords(
+                        fixed_chain,
+                        mobile_chain,
+                    )
+                    tm_target_length = len(fixed_chain.sequence)
+                    if args.score_scope == "filtered":
+                        fixed_mask = fixed_chain.get_bfac_occ_mask(
+                            args.min_bfac, args.max_bfac, args.min_occ, fixed_indices
+                        )
+                        mobile_mask = mobile_chain.get_bfac_occ_mask(
+                            args.min_bfac, args.max_bfac, args.min_occ, mobile_indices
+                        )
+                        quality_mask = fixed_mask & mobile_mask
+
+                score_values = _compute_scores(
+                    fixed_coords,
+                    mobile_coords,
+                    rotation,
+                    translation,
+                    rmsd,
+                    cutoff_factor=args.cutoff,
+                    selected_scores=args.scores,
+                    tm_target_length=tm_target_length,
+                    score_scope=args.score_scope,
+                    quality_mask=quality_mask,
+                    refine_enabled=args.refine,
+                )
+                score_parts = []
+                if "tm" in score_values:
+                    score_parts.append(f"TM-score {score_values['tm']:.4f}")
+                if "gdt_ts" in score_values:
+                    score_parts.append(f"GDT-TS {score_values['gdt_ts']:.4f}")
+                if "gdt_ha" in score_values:
+                    score_parts.append(f"GDT-HA {score_values['gdt_ha']:.4f}")
+                if score_parts:
+                    logger.info("Additional scores: %s", ", ".join(score_parts))
+
             apply_transformation(mobile_st, rotation, translation)
 
             # Rename the chains in mobile structure after quaternary alignment

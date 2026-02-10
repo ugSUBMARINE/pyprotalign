@@ -7,6 +7,7 @@ Protein structure superposition using sequence alignment and iterative refinemen
 - **Sequence-based alignment**: Automatically identifies corresponding atoms via sequence alignment
 - **Kabsch algorithm**: Optimal least-squares superposition
 - **Iterative refinement**: Outlier rejection for improved accuracy
+- **Additional quality scores**: Optional TM-score, GDT-TS, and GDT-HA reporting
 - **Quality filtering**: Filter CA atoms by B-factor and occupancy
 - **Multi-chain support**:
   - Single-chain alignment with specified or default chains
@@ -58,6 +59,13 @@ uv run protalign fixed.cif mobile.cif --quaternary --match hungarian
 # With iterative refinement (reject outliers)
 uv run protalign fixed.cif mobile.cif --refine --cutoff 2.0 --cycles 5
 
+# Report additional structural similarity scores
+uv run protalign fixed.cif mobile.cif --scores rmsd,tm,gdt_ts,gdt_ha
+
+# Restrict optional scores to filtered or refined subsets
+uv run protalign fixed.cif mobile.cif --scores tm,gdt_ts --score-scope filtered --filter --min-occ 0.9
+uv run protalign fixed.cif mobile.cif --scores tm,gdt_ts --score-scope refined --refine
+
 # Filter by B-factor / occupancy (for well-defined regions)
 uv run protalign fixed.cif mobile.cif --filter --max-bfac 30 --min-occ 0.9
 
@@ -91,11 +99,16 @@ uv run protalign-all2all 9ebk.cif 9jn4.cif --format csv --output pairs.csv
 
 # Tighten filters
 uv run protalign-all2all 9ebk.cif 9jn4.cif --min-aligned 50 --max-rmsd 5.0
+
+# Restrict score calculation scope
+uv run protalign-all2all 9ebk.cif 9jn4.cif --score-scope filtered --filter --min-occ 0.9
+uv run protalign-all2all 9ebk.cif 9jn4.cif --score-scope refined --refine
 ```
 
 Notes:
 - Table output prints to stdout; CSV output always writes to a file.
-- Pairs below `--min-aligned` or above `--max-rmsd` are still reported with `NaN` and a `status` in CSV.
+- For successful alignments, TM-score, GDT-TS, and GDT-HA are reported in both table and CSV output.
+- Pairs below `--min-aligned` or above `--max-rmsd` are still reported with empty score fields and a `status` in CSV.
 
 Batch mode:
 - Activated when multiple mobile files provided
@@ -111,7 +124,7 @@ usage: protalign [-h] [--version] [-o OUTPUT] [--fixed-chain FIXED_CHAIN] [--mob
                  [--refine] [--cycles CYCLES] [--cutoff CUTOFF]
                  [--global] [--by-order]
                  [--quaternary] [--distance-threshold DISTANCE_THRESHOLD] [--rename-chains] [--match {hungarian,greedy}]
-                 [--verbose]
+                 [--verbose] [--scores SCORES] [--score-scope {mapped,filtered,refined}]
                  fixed mobile [mobile ...]
 
 Protein structure superposition tool
@@ -144,6 +157,9 @@ options:
   --match {hungarian,greedy}
                         Chain matching algorithm for quaternary mode (default: greedy)
   --verbose             Enable verbose output (show refinement cycles, chain matching details)
+  --scores SCORES       Comma-separated scores to report: rmsd,tm,gdt_ts,gdt_ha (default: rmsd)
+  --score-scope {mapped,filtered,refined}
+                        Residue scope for optional score calculation (default: mapped)
   ```
 
 ### Output
@@ -152,6 +168,7 @@ The tool reports:
 - Chain(s) and number of residues (single-chain mode)
 - Chains aligned and total pairs (global mode)
 - Number of aligned CA atom pairs
+- Optional TM-score, GDT-TS, and GDT-HA values (via `--scores`)
 - Quality filtering stats (if using `--filter`)
 - Final RMSD in Ångströms
 - If using `--refine`: number of pairs retained/rejected
