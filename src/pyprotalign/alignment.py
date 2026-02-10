@@ -382,12 +382,22 @@ def align_quaternary(
     if debug_enabled:
         logger.debug("Aligned %d CA pairs with RMSD %.3f Å", num_aligned, rmsd)
 
-    # Calculate all chain centers and pairwise distances
-    fixed_centers = np.array([np.nanmean(chn.coords, axis=0) for chn in fixed_chains], dtype=float)
-    mobile_centers = (
-        np.array([np.nanmean(chn.coords, axis=0) for chn in mobile_chains], dtype=float) @ rotation.T + translation
-    )
+    # Calculate all chain centers and pairwise distances.
+    fixed_centers, fixed_valid_indices, fixed_invalid_ids = _get_valid_chain_centers(fixed_chains)
+    mobile_centers, mobile_valid_indices, mobile_invalid_ids = _get_valid_chain_centers(mobile_chains)
+    mobile_centers = mobile_centers @ rotation.T + translation
     distances = np.sqrt(np.sum((fixed_centers[:, np.newaxis, :] - mobile_centers[np.newaxis, :, :]) ** 2, axis=-1))
+
+    if fixed_invalid_ids:
+        logger.warning(
+            "Skipping fixed chains with no finite CA coordinates: %s",
+            ", ".join(fixed_invalid_ids),
+        )
+    if mobile_invalid_ids:
+        logger.warning(
+            "Skipping mobile chains with no finite CA coordinates: %s",
+            ", ".join(mobile_invalid_ids),
+        )
 
     if debug_enabled:
         logger.debug("\n-- Chain center distances after seed alignment. --")
@@ -395,12 +405,19 @@ def align_quaternary(
             for j, distance in enumerate(row):
                 status = "✓" if distance <= distance_threshold else "✗"
                 logger.debug(
-                    "  %s ↔ %s: %.2f Å %s", fixed_chains[i].chain_id, mobile_chains[j].chain_id, distance, status
+                    "  %s ↔ %s: %.2f Å %s",
+                    fixed_chains[fixed_valid_indices[i]].chain_id,
+                    mobile_chains[mobile_valid_indices[j]].chain_id,
+                    distance,
+                    status,
                 )
         logger.debug("")
 
     matched_idx = _match_chain_centers(distances, distance_threshold)
-    chain_mapping = {fixed_chains[i].chain_id: mobile_chains[j].chain_id for i, j in matched_idx}
+    chain_mapping = {
+        fixed_chains[fixed_valid_indices[i]].chain_id: mobile_chains[mobile_valid_indices[j]].chain_id
+        for i, j in matched_idx
+    }
 
     logger.info(
         "Chain mapping after seed alignment: %s",
@@ -481,11 +498,21 @@ def align_hungarian(
     if debug_enabled:
         logger.debug("Aligned %d CA pairs with RMSD %.3f A", num_aligned, rmsd)
 
-    fixed_centers = np.array([np.nanmean(chn.coords, axis=0) for chn in fixed_chains], dtype=float)
-    mobile_centers = (
-        np.array([np.nanmean(chn.coords, axis=0) for chn in mobile_chains], dtype=float) @ rotation.T + translation
-    )
+    fixed_centers, fixed_valid_indices, fixed_invalid_ids = _get_valid_chain_centers(fixed_chains)
+    mobile_centers, mobile_valid_indices, mobile_invalid_ids = _get_valid_chain_centers(mobile_chains)
+    mobile_centers = mobile_centers @ rotation.T + translation
     distances = np.sqrt(np.sum((fixed_centers[:, np.newaxis, :] - mobile_centers[np.newaxis, :, :]) ** 2, axis=-1))
+
+    if fixed_invalid_ids:
+        logger.warning(
+            "Skipping fixed chains with no finite CA coordinates: %s",
+            ", ".join(fixed_invalid_ids),
+        )
+    if mobile_invalid_ids:
+        logger.warning(
+            "Skipping mobile chains with no finite CA coordinates: %s",
+            ", ".join(mobile_invalid_ids),
+        )
 
     if debug_enabled:
         logger.debug("\n-- Chain center distances after seed alignment. --")
@@ -494,15 +521,18 @@ def align_hungarian(
                 status = "ok" if distance <= distance_threshold else "skip"
                 logger.debug(
                     "  %s <-> %s: %.2f A (%s)",
-                    fixed_chains[i].chain_id,
-                    mobile_chains[j].chain_id,
+                    fixed_chains[fixed_valid_indices[i]].chain_id,
+                    mobile_chains[mobile_valid_indices[j]].chain_id,
                     distance,
                     status,
                 )
         logger.debug("")
 
     matched_idx = _match_chain_centers_hungarian(distances, distance_threshold)
-    chain_mapping = {fixed_chains[i].chain_id: mobile_chains[j].chain_id for i, j in matched_idx}
+    chain_mapping = {
+        fixed_chains[fixed_valid_indices[i]].chain_id: mobile_chains[mobile_valid_indices[j]].chain_id
+        for i, j in matched_idx
+    }
 
     logger.info(
         "Chain mapping after seed alignment (Hungarian): %s",
@@ -552,6 +582,29 @@ def _match_chain_centers(distances: NDArray[np.floating], distance_threshold: fl
         used_mobile[j] = True
 
     return pairs
+
+
+def _get_valid_chain_centers(
+    chains: list[ProteinChain],
+) -> tuple[NDArray[np.floating], list[int], list[str]]:
+    """Return centers for chains that have at least one finite coordinate triplet."""
+    valid_centers: list[NDArray[np.floating]] = []
+    valid_indices: list[int] = []
+    invalid_chain_ids: list[str] = []
+
+    for idx, chain in enumerate(chains):
+        finite_mask = np.all(np.isfinite(chain.coords), axis=1)
+        if not np.any(finite_mask):
+            invalid_chain_ids.append(chain.chain_id)
+            continue
+        center = np.mean(chain.coords[finite_mask], axis=0)
+        valid_centers.append(center)
+        valid_indices.append(idx)
+
+    if len(valid_centers) == 0:
+        raise ValueError("No chains with finite CA coordinates available for quaternary matching.")
+
+    return np.array(valid_centers, dtype=float), valid_indices, invalid_chain_ids
 
 
 def _hungarian_minimize(cost: NDArray[np.floating]) -> list[tuple[int, int]]:

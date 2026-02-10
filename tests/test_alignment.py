@@ -1,5 +1,7 @@
 """Tests for sequence alignment operations."""
 
+import warnings
+
 import gemmi
 import numpy as np
 import pytest
@@ -420,6 +422,36 @@ class TestAlignQuaternary:
         assert len(chain_mapping) == 1
         assert chain_mapping == {"A": "A"}
 
+    def test_skips_chains_without_ca_without_runtime_warning(self) -> None:
+        """Chains with all-NaN coordinates should be skipped without nanmean warnings."""
+        fixed_st = self._create_structure(
+            [
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("B", "THR VAL LEU", (0.0, 10.0, 0.0), {0, 1, 2}),
+            ]
+        )
+        mobile_st = self._create_structure(
+            [
+                ("A", "ALA GLY SER", (0.0, 0.0, 0.0), None),
+                ("C", "THR VAL LEU", (0.0, 10.0, 0.0), {0, 1, 2}),
+            ]
+        )
+
+        fixed_chains = get_all_protein_chains(fixed_st[0])
+        mobile_chains = get_all_protein_chains(mobile_st[0])
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", RuntimeWarning)
+            rotation, translation, rmsd, num_aligned, chain_mapping = align_quaternary(
+                fixed_chains,
+                mobile_chains,
+                distance_threshold=15.0,
+            )
+
+        assert len(chain_mapping) == 1
+        assert chain_mapping == {"A": "A"}
+        assert not any(issubclass(w.category, RuntimeWarning) for w in caught)
+
 
 class TestAlignHungarian:
     """Tests for align_hungarian function and Hungarian chain matching helper."""
@@ -601,9 +633,12 @@ class TestAlignHungarian:
         fixed_chains = get_all_protein_chains(fixed_st[0])
         mobile_chains = get_all_protein_chains(mobile_st[0])
 
-        rotation, translation, rmsd, num_aligned, chain_mapping = align_hungarian(
-            fixed_chains, mobile_chains, distance_threshold=15.0
-        )
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", RuntimeWarning)
+            rotation, translation, rmsd, num_aligned, chain_mapping = align_hungarian(
+                fixed_chains, mobile_chains, distance_threshold=15.0
+            )
 
         assert len(chain_mapping) == 1
         assert chain_mapping == {"A": "A"}
+        assert not any(issubclass(w.category, RuntimeWarning) for w in caught)
