@@ -4,7 +4,7 @@ import numpy as np
 
 from pyprotalign import tm_align as tm_align_module
 from pyprotalign.chain import ProteinChain
-from pyprotalign.tm_align import tm_align
+from pyprotalign.tm_align import build_structure_sequence_alignment, tm_align
 
 
 def _make_chain(chain_id: str, coords: np.ndarray, sequence_len: int | None = None) -> ProteinChain:
@@ -190,3 +190,20 @@ class TestTMAlign:
         assert tm > 0.99
         assert num_pairs == len(coords)
         assert mapping == tuple((i, i) for i in range(len(coords)))
+
+
+class TestBuildStructureSequenceAlignment:
+    def test_build_structure_alignment_with_gaps(self) -> None:
+        fixed_aln, match, mobile_aln = build_structure_sequence_alignment(
+            "ABCDEFG",
+            "ABXYEFG",
+            [(0, 0), (1, 1), (4, 4), (5, 5), (6, 6)],
+        )
+
+        assert fixed_aln == "ABCD--EFG"
+        assert mobile_aln == "AB--XYEFG"
+        assert match == "||    |||"
+
+    def test_build_structure_alignment_validates_indices(self) -> None:
+        with np.testing.assert_raises(ValueError):
+            build_structure_sequence_alignment("ABC", "ABC", [(3, 0)])

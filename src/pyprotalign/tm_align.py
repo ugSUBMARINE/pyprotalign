@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -640,3 +641,62 @@ def tm_align(
     if debug_enabled:
         logger.debug("TM-align done: best_tm=%.6f, mapped_pairs=%d", best.score, len(mapping_residue))
     return best.rotation, best.translation, best.score, len(mapping_residue), mapping_residue
+
+
+def build_structure_sequence_alignment(
+    fixed_sequence: str,
+    mobile_sequence: str,
+    mapping: Iterable[tuple[int, int]],
+) -> tuple[str, str, str]:
+    """Build structure-based sequence alignment strings from mapped residue index pairs.
+
+    Args:
+        fixed_sequence: Fixed/reference amino-acid sequence.
+        mobile_sequence: Mobile/query amino-acid sequence.
+        mapping: Iterable of mapped residue index pairs (fixed_idx, mobile_idx).
+
+    Returns:
+        Tuple of (fixed_aligned, match_line, mobile_aligned).
+    """
+    pairs = sorted({(int(i), int(j)) for i, j in mapping})
+    for fixed_i, mobile_i in pairs:
+        if fixed_i < 0 or fixed_i >= len(fixed_sequence):
+            raise ValueError(f"fixed index {fixed_i} out of range for sequence length {len(fixed_sequence)}")
+        if mobile_i < 0 or mobile_i >= len(mobile_sequence):
+            raise ValueError(f"mobile index {mobile_i} out of range for sequence length {len(mobile_sequence)}")
+
+    fixed_chars: list[str] = []
+    mobile_chars: list[str] = []
+    fixed_pos = 0
+    mobile_pos = 0
+
+    for fixed_i, mobile_i in pairs:
+        while fixed_pos < fixed_i:
+            fixed_chars.append(fixed_sequence[fixed_pos])
+            mobile_chars.append("-")
+            fixed_pos += 1
+        while mobile_pos < mobile_i:
+            fixed_chars.append("-")
+            mobile_chars.append(mobile_sequence[mobile_pos])
+            mobile_pos += 1
+        fixed_chars.append(fixed_sequence[fixed_i])
+        mobile_chars.append(mobile_sequence[mobile_i])
+        fixed_pos = fixed_i + 1
+        mobile_pos = mobile_i + 1
+
+    while fixed_pos < len(fixed_sequence):
+        fixed_chars.append(fixed_sequence[fixed_pos])
+        mobile_chars.append("-")
+        fixed_pos += 1
+    while mobile_pos < len(mobile_sequence):
+        fixed_chars.append("-")
+        mobile_chars.append(mobile_sequence[mobile_pos])
+        mobile_pos += 1
+
+    fixed_aligned = "".join(fixed_chars)
+    mobile_aligned = "".join(mobile_chars)
+    match_chars = [
+        " " if aa_fixed == "-" or aa_mobile == "-" else ("|" if aa_fixed == aa_mobile else ".")
+        for aa_fixed, aa_mobile in zip(fixed_aligned, mobile_aligned, strict=True)
+    ]
+    return fixed_aligned, "".join(match_chars), mobile_aligned
