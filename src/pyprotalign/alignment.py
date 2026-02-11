@@ -99,15 +99,15 @@ def collect_aligned_pair_coords(
     min_pairs: int = 3,
 ) -> tuple[NDArray[np.floating], NDArray[np.floating], list[int], list[int]]:
     """Collect aligned CA coordinates for one chain pair, before superposition.
-    
+
     Args:
         fixed_chain: Fixed ProteinChain
         mobile_chain: Mobile ProteinChain
         min_pairs: Minimum number of aligned CA pairs required (default: 3, set to 0 to skip check)
-    
+
     Returns:
         Tuple of (fixed_coords, mobile_coords, fixed_indices, mobile_indices)
-    
+
     Raises:
         ValueError: If fewer than min_pairs aligned CA pairs and min_pairs > 0
     """
